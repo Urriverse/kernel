@@ -1,0 +1,9 @@
+[profile]
+description = "Profile for debugging in emulator."
+
+[env]
+PROFILE = "dev"
+
+[cargo]
+profile = "dev"
+features = [ "devlog" ]
