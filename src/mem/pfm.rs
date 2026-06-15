@@ -5,19 +5,28 @@ use heapless::Vec;
 use crate::mem::kdm::Paddr;
 use crate::mem::ptm::{EntryFlags, Polen};
 use crate::mem::upa;
-use crate::mem::reg::{self, Kind};
+use crate::mem::pmr::{self, Kind};
 
 pub const PAGE_SIZE: usize = 4096;
 pub const VMEMMAP_BASE: usize = 0xffff_D000_0000_0000;
 pub const PF_RESERVED: u16 = 1 << 0;
+pub const PF_SLAB: u16 = 1 << 1;
+
+/// Sentinel value for `slab_cache` indicating the page is not a slab page.
+pub const SLAB_NO_CACHE: u32 = 0xFFFF_FFFF;
 
 #[repr(C, align(8))]
 pub struct PageFrame {
+    // Buddy allocator fields
     refcount: AtomicU32,
     flags: AtomicU16,
     order: AtomicU8,
     _pad: u8,
     next_free: AtomicU32,
+    // SOA slab metadata
+    slab_cache: AtomicU32,   // cache index (SLAB_NO_CACHE = not a slab page)
+    slab_inuse: AtomicU16,   // number of allocated objects in this slab
+    slab_total: AtomicU16,   // total number of objects in this slab
 }
 
 const INVALID_PFN: u32 = 0xffff_ffff;
@@ -30,6 +39,9 @@ impl PageFrame {
             order: AtomicU8::new(0),
             _pad: 0,
             next_free: AtomicU32::new(INVALID_PFN),
+            slab_cache: AtomicU32::new(SLAB_NO_CACHE),
+            slab_inuse: AtomicU16::new(0),
+            slab_total: AtomicU16::new(0),
         }
     }
 
@@ -49,6 +61,19 @@ impl PageFrame {
         let v = self.next_free.load(Ordering::Acquire);
         if v == INVALID_PFN { None } else { Some(v as _) }
     }
+
+    // ── SOA slab accessors ────────────────────────────────────────────────
+
+    pub fn set_slab_cache(&self, idx: u32) { self.slab_cache.store(idx, Ordering::Release); }
+    pub fn slab_cache(&self) -> u32 { self.slab_cache.load(Ordering::Acquire) }
+
+    pub fn set_slab_inuse(&self, val: u16) { self.slab_inuse.store(val, Ordering::Release); }
+    pub fn slab_inuse(&self) -> u16 { self.slab_inuse.load(Ordering::Acquire) }
+    pub fn inc_slab_inuse(&self) -> u16 { self.slab_inuse.fetch_add(1, Ordering::AcqRel) }
+    pub fn dec_slab_inuse(&self) -> u16 { self.slab_inuse.fetch_sub(1, Ordering::AcqRel) }
+
+    pub fn set_slab_total(&self, val: u16) { self.slab_total.store(val, Ordering::Release); }
+    pub fn slab_total(&self) -> u16 { self.slab_total.load(Ordering::Acquire) }
 }
 
 pub fn pfn_to_page(pfn: usize) -> &'static PageFrame {
@@ -61,7 +86,7 @@ pub fn page_to_pfn(page: &PageFrame) -> usize {
 }
 
 pub fn reserve(pfn: usize) {
-    trace!("PFM: reserving PFN {}", pfn);
+    // trace!("PFM: reserving PFN {}", pfn);
     let page = pfn_to_page(pfn);
     let flags = page.flags();
     page.set_flags(flags | PF_RESERVED);
@@ -69,7 +94,7 @@ pub fn reserve(pfn: usize) {
 }
 
 pub fn unreserve(pfn: usize) {
-    trace!("PFM: unreserving PFN {}", pfn);
+    // trace!("PFM: unreserving PFN {}", pfn);
     let page = pfn_to_page(pfn);
     let flags = page.flags();
     page.set_flags(flags & !PF_RESERVED);
@@ -89,7 +114,7 @@ pub fn init(polen: &mut Polen) {
 
     // 1. Determine maximum PFN from usable regions
     let mut max_phys = 0;
-    for region in reg::iter() {
+    for region in pmr::iter() {
         if region.kind == Kind::USABLE {
             let end = region.base + region.len;
             if end > max_phys { max_phys = end; }
@@ -100,7 +125,7 @@ pub fn init(polen: &mut Polen) {
     info!("PFM: max PFN = {}", max_pfn);
 
     // 2. Process each usable region, allocate and map metadata pages
-    for region in reg::iter() {
+    for region in pmr::iter() {
         if region.kind != Kind::USABLE {
             trace!("PFM: skipping non‑usable region kind {:?}", region.kind);
             continue;
@@ -122,27 +147,27 @@ pub fn init(polen: &mut Polen) {
         let mut curr_vaddr = map_start;
         let mut remaining = total_bytes;
         while remaining > 0 {
-            debug!("PFM: allocating metadata page for VA {:#X}, remaining bytes {}", curr_vaddr, remaining);
+            // debug!("PFM: allocating metadata page for VA {:#X}, remaining bytes {}", curr_vaddr, remaining);
             let phys = upa::alloc(1);
             if phys.to_raw() == 0 {
                 panic!("PFM: out of memory while allocating metadata page at VA {:#X}", curr_vaddr);
             }
             let pfn = phys.to_raw() / PAGE_SIZE;
-            info!("PFM: allocated phys page {:#X} (PFN {}) for VA {:#X}", phys.to_raw(), pfn, curr_vaddr);
+            // info!("PFM: allocated phys page {:#X} (PFN {}) for VA {:#X}", phys.to_raw(), pfn, curr_vaddr);
 
             // Map the page into the vmemmap area
-            debug!("PFM: mapping VA {:#X} -> PA {:#X}", curr_vaddr, phys.to_raw());
+            // debug!("PFM: mapping VA {:#X} -> PA {:#X}", curr_vaddr, phys.to_raw());
             if let Err(e) = polen.exco.try_map4k(curr_vaddr, phys, EntryFlags::PRESENT | EntryFlags::WRITABLE) {
                 error!("PFM: mapping failed at VA {:#X}: {}", curr_vaddr, e);
                 panic!("PFM: try_map4k failed");
             }
-            trace!("PFM: mapped successfully");
+            // trace!("PFM: mapped successfully");
 
             // Zero the page
             unsafe {
                 let slice = core::slice::from_raw_parts_mut(curr_vaddr as *mut u8, PAGE_SIZE);
                 slice.fill(0);
-                trace!("PFM: zeroed page at VA {:#X}", curr_vaddr);
+                // trace!("PFM: zeroed page at VA {:#X}", curr_vaddr);
             }
 
             // Store PFN for later reservation (cannot reserve now because the vmemmap for this PFN may not be mapped yet)

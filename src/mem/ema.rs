@@ -4,9 +4,9 @@
 //! is available. It allocates memory from the top of the largest usable memory
 //! region, moving downwards. All allocations are page‑aligned (4 KiB).
 
-use crate::{mem::reg::Kind, sync::Nutex};
+use crate::{mem::pmr::Kind, sync::Nutex};
 
-use super::{reg::{self, Region}, kdm::Paddr};
+use super::{pmr::{self, Region}, kdm::Paddr};
 
 /// Early memory allocator state.
 pub struct EarlyMemAlloc
@@ -30,7 +30,7 @@ impl EarlyMemAlloc
         // Find the largest usable region.
         let mut largest: Region = Region::default();
 
-        for region in reg::iter()
+        for region in pmr::iter()
         {
             if region.kind == Kind::USABLE && region.len > largest.len
             {

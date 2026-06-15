@@ -4,24 +4,30 @@ use crate::mem::pfm::{pfn_to_page, PAGE_SIZE, is_reserved};
 use crate::sync::Mutex;
 use core::sync::atomic::Ordering;
 
-pub const MAX_ORDER: usize = 10;  // 2^10 * 4 KiB = 4 MiB
+pub const MAX_ORDER: usize = 12;  // 2^12 * 4 KiB = 16 MiB (or 8 huge pages by 2MiB)
 
 pub struct Bsu<const START_PFN: usize, const END_PFN: usize> {
     free_lists: [Mutex<Option<usize>>; MAX_ORDER + 1],
+    usage: usize,
 }
 
 impl<const START: usize, const END: usize> Bsu<START, END> {
     pub const fn new() -> Self {
         const INIT: Mutex<Option<usize>> = Mutex::new(None);
-        Self { free_lists: [INIT; MAX_ORDER + 1] }
+        Self { free_lists: [INIT; MAX_ORDER + 1], usage: 0 }
+    }
+
+    pub fn usage(&self) -> usize
+    {
+        self.usage
     }
 
     pub fn init(&self) {
         info!("BSU[{:#X}..{:#X}]: initialising", START << 12, END << 12);
         let mut total_added = 0;
-        for region in crate::mem::reg::iter() {
-            if region.kind != crate::mem::reg::Kind::USABLE {
-                trace!("BSU: skipping non‑usable region kind {:?}", region.kind);
+        for region in crate::mem::pmr::iter() {
+            if region.kind != crate::mem::pmr::Kind::USABLE {
+                // trace!("BSU: skipping non‑usable region kind {:?}", region.kind);
                 continue;
             }
             let start_pfn = (region.base + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -29,7 +35,7 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
             let zone_start = START.max(start_pfn);
             let zone_end = END.min(end_pfn);
             if zone_start >= zone_end {
-                trace!("BSU: region PFN [{},{}) outside zone", start_pfn, end_pfn);
+                // trace!("BSU: region PFN [{},{}) outside zone", start_pfn, end_pfn);
                 continue;
             }
             // Scan the zone for contiguous non‑reserved runs
@@ -73,7 +79,7 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
                 }
                 order -= 1;
             };
-            trace!("BSU: freeing block order {} at PFN {} (size {})", order, pfn, block_size);
+            // trace!("BSU: freeing block order {} at PFN {} (size {})", order, pfn, block_size);
             self.free_pages_of_order(pfn, order);
             pfn += block_size;
             remaining -= block_size;
@@ -81,7 +87,7 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
     }
 
     fn free_pages_of_order(&self, pfn: usize, order: usize) {
-        trace!("BSU::free_pages_of_order: pfn={}, order={}", pfn, order);
+        // trace!("BSU::free_pages_of_order: pfn={}, order={}", pfn, order);
         debug_assert!(order <= MAX_ORDER);
         let page = pfn_to_page(pfn);
         for i in 0..(1 << order) {
@@ -98,9 +104,9 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
     }
 
     fn coalesce(&self, pfn: usize, order: usize) {
-        trace!("BSU::coalesce: pfn={}, order={}", pfn, order);
+        // trace!("BSU::coalesce: pfn={}, order={}", pfn, order);
         if order == MAX_ORDER {
-            trace!("BSU: max order reached, no coalesce");
+            // trace!("BSU: max order reached, no coalesce");
             return;
         }
         let buddy = pfn ^ (1 << order);
@@ -118,7 +124,7 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
             cur.is_some()
         };
         if !buddy_free {
-            trace!("BSU: buddy {} not free", buddy);
+            // trace!("BSU: buddy {} not free", buddy);
             return;
         }
         debug!("BSU: coalescing order {} blocks PFN {} and {} into order {}",
@@ -151,7 +157,8 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
         }
     }
 
-    pub fn alloc_pages(&self, order: usize) -> Option<usize> {
+    pub fn alloc_pages(&mut self, order: usize) -> Option<usize> {
+        self.usage += 2 << order;
         trace!("BSU::alloc_pages: order={}", order);
         if order > MAX_ORDER {
             error!("BSU: allocation order {} exceeds MAX_ORDER", order);
@@ -182,13 +189,14 @@ impl<const START: usize, const END: usize> Bsu<START, END> {
         None
     }
 
-    pub fn free_pages(&self, pfn: usize) {
+    pub fn free_pages(&mut self, pfn: usize) {
         trace!("BSU::free_pages: pfn={}", pfn);
         if is_reserved(pfn) {
             warn!("BSU: attempt to free reserved PFN {}", pfn);
             return;
         }
         let order = pfn_to_page(pfn).order() as usize;
+        self.usage -= 2 << order;
         if order > MAX_ORDER {
             error!("BSU: invalid order {} at PFN {:#X}", order, pfn);
             return;

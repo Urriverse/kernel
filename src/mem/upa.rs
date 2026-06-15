@@ -4,50 +4,86 @@
 //! `migrate()` switches to the BSA backend. The `free` function retrieves the
 //! allocation order from the page frame metadata.
 
-use core::mem::transmute;
-use core::ptr::addr_of_mut;
+use core::ptr::addr_of;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::mem::kdm::Paddr;
 use crate::mem::ema;
 
-/// Dummy free stub (used while EMA is active).
+// -----------------------------------------------------------------------------
+// Backend definition – plain function pointers (thin, Sync, safe to copy)
+// -----------------------------------------------------------------------------
+struct Backend {
+    alloc: fn(usize) -> Paddr,
+    free: fn(Paddr),
+}
+
+// -----------------------------------------------------------------------------
+// The two backends: early (pre‑migration) and late (post‑migration).
+// Both are 'static and will never be deallocated.
+// -----------------------------------------------------------------------------
+/// Dummy free stub used before migration.
 fn free_stub(_p: Paddr) {
     warn!("upa::free called before migration – memory leak");
 }
 
-static mut EMALLOC: &'static dyn Fn(usize) -> Paddr = &ema::alloc;
-static mut EMFREE:  &'static dyn Fn(Paddr) -> ()    = &free_stub;
+static EARLY_BACKEND: Backend = Backend {
+    alloc: ema::alloc,
+    free: free_stub,
+};
 
-static ALLOC: AtomicPtr<&'static dyn Fn(usize) -> Paddr> =
-    AtomicPtr::new(unsafe { transmute(addr_of_mut!(EMALLOC)) });
-static FREE: AtomicPtr<&'static dyn Fn(Paddr) -> ()> =
-    AtomicPtr::new(unsafe { transmute(addr_of_mut!(EMFREE)) });
+// The late backend is defined here, but its functions are only called after
+// `migrate()` has run – by which time the BSA is fully initialised.
+static LATE_BACKEND: Backend = Backend {
+    alloc: crate::mem::bua::alloc,
+    free: crate::mem::bua::free,
+};
+
+// -----------------------------------------------------------------------------
+// Global atomic pointer to the currently active backend.
+// -----------------------------------------------------------------------------
+/// Initially points to `EARLY_BACKEND`. After `migrate()` it points to
+/// `LATE_BACKEND`. The pointer is never null and never points to invalid data.
+static CURRENT_BACKEND: AtomicPtr<Backend> =
+    AtomicPtr::new(addr_of!(EARLY_BACKEND) as *mut Backend);
+
+// -----------------------------------------------------------------------------
+// Public API
+// -----------------------------------------------------------------------------
 
 /// Allocate `count` physical pages (each 4 KiB).
 pub fn alloc(count: usize) -> Paddr {
-    (unsafe { ALLOC.load(Ordering::Relaxed).as_ref() }).unwrap()(count)
+    // SAFETY:
+    // - `CURRENT_BACKEND` is always initialised to a non‑null pointer.
+    // - The pointer always points to a valid `Backend` (either `EARLY_BACKEND`
+    //   or `LATE_BACKEND`), which are `'static` and never destroyed.
+    // - The `Backend::alloc` function is a plain function pointer; calling it
+    //   through a safe reference is correct and does not violate aliasing.
+    let backend = unsafe { &*CURRENT_BACKEND.load(Ordering::Acquire) };
+    (backend.alloc)(count)
 }
 
 /// Free a block of pages previously allocated with `alloc`.
 pub fn free(p: Paddr) {
-    (unsafe { FREE.load(Ordering::Relaxed).as_ref() }).unwrap()(p)
+    // SAFETY: Same reasoning as in `alloc`.
+    let backend = unsafe { &*CURRENT_BACKEND.load(Ordering::Acquire) };
+    (backend.free)(p)
 }
 
-/// Switch from EMA to the BSA backend. Called once after BSA is ready.
+/// Switch from EMA to the BSA backend. Called exactly once after BSA is ready.
 pub fn migrate() {
-    use crate::mem::bua;
-    let mut new_alloc = &bua::alloc as &'static dyn Fn(usize) -> Paddr;
-    let mut new_free  = &bua::free as &'static dyn Fn(Paddr) -> ();
-    let new_alloc_ptr = unsafe { transmute(addr_of_mut!(new_alloc)) };
-    let new_free_ptr  = unsafe { transmute(addr_of_mut!(new_free)) };
-    if ALLOC.compare_exchange(unsafe { transmute(addr_of_mut!(EMALLOC)) }, new_alloc_ptr,
-                              Ordering::SeqCst, Ordering::Relaxed).is_err() {
+    let expected = addr_of!(EARLY_BACKEND) as *mut Backend;
+    let new = addr_of!(LATE_BACKEND) as *mut Backend;
+
+    // Atomically replace the early backend with the late backend.
+    // The `SeqCst` ordering guarantees that any thread that loads the pointer
+    // after this exchange (with `Acquire`) will see the new value.
+    if CURRENT_BACKEND
+        .compare_exchange(expected, new, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
         panic!("UPA already migrated");
     }
-    if FREE.compare_exchange(unsafe { transmute(addr_of_mut!(EMFREE)) }, new_free_ptr,
-                             Ordering::SeqCst, Ordering::Relaxed).is_err() {
-        panic!("UPA already migrated");
-    }
+
     info!("UPA migrated to BSA backend");
 }

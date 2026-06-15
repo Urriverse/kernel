@@ -17,4 +17,4 @@ pub use exco::{Area, Exco, Tab};
 pub use polen::Polen;
 
 use crate::mem::kdm::{Paddr, Vaddr, HHDM};
-use crate::mem::reg::{self, Kind};
+use crate::mem::pmr::{self, Kind};

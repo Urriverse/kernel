@@ -20,7 +20,7 @@ use heapless::Vec;
 use super::exco::{self, is_huge, walk_entry, walk_entry_mut, Area, Exco};
 use super::*;
 use crate::mem::kdm::Paddr;
-use crate::mem::reg::{self, Kind};
+use crate::mem::pmr::{self, Kind};
 
 // ---------------------------------------------------------------------------
 // Helper: check physical contiguity for a range of bytes
@@ -32,7 +32,7 @@ fn is_phys_range_contiguous(paddr: Paddr, size: usize) -> bool {
     let start = paddr.to_raw();
     let end = start + size;
 
-    for region in reg::iter() {
+    for region in pmr::iter() {
         // Only consider regions that can be mapped (USABLE, KERNEL, BOOTLOADER)
         match region.kind {
             Kind::USABLE | Kind::KERNEL | Kind::BOOTLOADER => {

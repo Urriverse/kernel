@@ -38,6 +38,11 @@ impl Bsa {
         }
     }
 
+    pub fn usage(&self) -> [usize; 3]
+    {
+        [self.dma.usage(), self.dma32.usage(), self.norm.usage()]
+    }
+
     pub fn init(&self) {
         info!("BSA: initialising DMA zone");
         self.dma.init();
@@ -48,7 +53,7 @@ impl Bsa {
         info!("BSA: all zones initialised");
     }
 
-    pub fn alloc_pages(&self, order: usize, gfp: GfpFlags) -> Option<Paddr> {
+    pub fn alloc_pages(&mut self, order: usize, gfp: GfpFlags) -> Option<Paddr> {
         trace!("BSA::alloc_pages: order={}, flags={:?}", order, gfp);
         if order > MAX_ORDER {
             error!("BSA: allocation order {} exceeds MAX_ORDER", order);
@@ -79,7 +84,7 @@ impl Bsa {
         None
     }
 
-    pub fn free_pages(&self, paddr: Paddr) {
+    pub fn free_pages(&mut self, paddr: Paddr) {
         let pfn = paddr.to_raw() / PAGE_SIZE;
         trace!("BSA::free_pages: PFN {}", pfn);
         let order = pfn_to_page(pfn).order() as usize;
@@ -119,11 +124,16 @@ pub fn init() {
 #[allow(static_mut_refs)]
 pub fn alloc_pages(order: usize, gfp: GfpFlags) -> Option<Paddr> {
     trace!("BSA::alloc_pages (global): order={}", order);
-    unsafe { BSA.as_ref().unwrap().alloc_pages(order, gfp) }
+    unsafe { BSA.as_mut().unwrap().alloc_pages(order, gfp) }
 }
 
 #[allow(static_mut_refs)]
 pub fn free_pages(paddr: Paddr) {
     trace!("BSA::free_pages (global): paddr={:#X}", paddr.to_raw());
-    unsafe { BSA.as_ref().unwrap().free_pages(paddr) }
+    unsafe { BSA.as_mut().unwrap().free_pages(paddr) }
+}
+
+#[allow(static_mut_refs)]
+pub fn usage() -> [usize; 3] {
+    unsafe { BSA.as_ref().unwrap().usage() }
 }

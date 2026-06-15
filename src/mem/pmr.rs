@@ -1,4 +1,4 @@
-//! Physical memory map from the bootloader (Limine).
+//! Physical memory regions.
 //!
 //! This module provides access to the memory map entries, a typed [`Kind`]
 //! enumeration for region types, and an iterator over [`Region`]s.
