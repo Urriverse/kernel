@@ -1,25 +1,17 @@
-//! A no‑interrupt mutex (implicit lock).
-//!
-//! [`Nitex`] provides a “mutex” that does not actually spin; instead it
-//! simply disables interrupts on `lock()` and restores them on `drop()`.
-//! There is no competition – the lock is always acquired immediately.
-//! This is useful for temporarily disabling interrupts around a critical
-//! section without any actual locking.
-
 use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicBool, Ordering},
     arch::asm
 };
 
-/// A mutex that only disables interrupts, no spinning.
-///
-/// The `lock()` method always succeeds because there is no actual lock flag.
-/// It saves the current interrupt state, disables interrupts, and returns
-/// a guard that restores the original interrupt state when dropped.
 pub struct Nitex<T>
 {
     data: UnsafeCell<T>,
+}
+
+impl<T: Clone> Clone for Nitex<T> {
+    fn clone(&self) -> Self {
+        Self::new((unsafe { &*self.data.get() }).clone())
+    }
 }
 
 unsafe impl<T: Send> Send for Nitex<T> {}
@@ -27,15 +19,17 @@ unsafe impl<T: Send> Sync for Nitex<T> {}
 
 impl<T> Nitex<T>
 {
-    /// Create a new `Nitex` containing `t`.
     pub const fn new(t: T) -> Self
     {
         Self { data: UnsafeCell::new(t) }
     }
 
-    /// Acquire the “lock” (disable interrupts).
-    ///
-    /// This function always returns immediately; there is no contention.
+    pub unsafe fn inner(&self) -> &'_ mut T {
+        unsafe {
+            self.data.as_mut_unchecked()
+        }
+    }
+
     pub fn lock(&self) -> NitexGuard<'_, T>
     {
         let rflags: u64;
@@ -54,7 +48,6 @@ impl<T> Nitex<T>
     }
 }
 
-/// A guard that restores interrupts when dropped.
 pub struct NitexGuard<'a, T>
 {
     mutex: &'a Nitex<T>,

@@ -1,25 +1,34 @@
 [package]
 name = "{KERNEL_NAME}"
-version = "0.4.1-56.21"
+version = "0.4.3-2.5"
 edition = "2024"
 
 [dependencies]
-acpi = {{ version = "6", features = ["alloc"] }}
 bitflags = "2"
 extrum = {{ version = "0.1.3", features = ["no_std"] }}
 heapless = "0"
 lazy_static = {{ version = "1", features = ["spin_no_std"] }}
 limine = "0"
 x86 = "0"
+x86_64 = "0"
+acpi = {{ version = "6", features = ["alloc"] }}
 
 [profile.dev]
 panic = "abort"
 
 [profile.release]
 panic = "abort"
+opt-level = 0 # TODO: fix issue and change back to 3
+lto = true
+debug = false
+strip = true
+overflow-checks = false
 
 [profile.dbg]
 inherits = "dev"
+
+[profile.dev-release]
+inherits = "release"
 
 [features]
 lowlog = []

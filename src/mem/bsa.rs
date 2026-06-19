@@ -1,139 +1,698 @@
-//! Buddy System Allocator – dispatches to DMA, DMA32, and NORM zones.
+// TODO: fix PCP false sharing
 
-use crate::mem::bsu::{Bsu, MAX_ORDER};
-use crate::mem::kdm::Paddr;
-use crate::mem::pfm::{pfn_to_page, PAGE_SIZE};
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::mem::MaybeUninit;
+use crate::mem::{pfm, pmr, kdm::Paddr, ema};
+use crate::sync::{Nutex, Nitex};
+use crate::arch;
+use heapless::Vec;
 
-// Zone PFN ranges
-const DMA_START: usize = 0;
-const DMA_END: usize = (16 * 1024 * 1024) / PAGE_SIZE;
-const DMA32_START: usize = 0;
-const DMA32_END: usize = (4 * 1024 * 1024 * 1024) / PAGE_SIZE;
-const NORM_START: usize = DMA32_END;
-const NORM_END: usize = usize::MAX;
+pub const MAX_ORDER: usize = 10;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct GfpFlags(u32);
+const PCP_SIZE: usize = 32;
 
-impl GfpFlags {
-    pub const GFP_DMA: Self = Self(1 << 0);
-    pub const GFP_DMA32: Self = Self(1 << 1);
-    pub const GFP_NORMAL: Self = Self(1 << 2);
-    pub const GFP_KERNEL: Self = Self::GFP_NORMAL;
+const DMA_END: usize = 16 * 1024 * 1024;      // 16 MiB
+const DMA32_END: usize = 4 * 1024 * 1024 * 1024; // 4 GiB
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    DMA,
+    DMA32,
+    Normal,
 }
 
-pub struct Bsa {
-    dma: Bsu<DMA_START, DMA_END>,
-    dma32: Bsu<DMA32_START, DMA32_END>,
-    norm: Bsu<NORM_START, NORM_END>,
-}
-
-impl Bsa {
-    pub fn new() -> Self {
-        info!("BSA::new: creating zones");
-        Self {
-            dma: Bsu::new(),
-            dma32: Bsu::new(),
-            norm: Bsu::new(),
-        }
-    }
-
-    pub fn usage(&self) -> [usize; 3]
-    {
-        [self.dma.usage(), self.dma32.usage(), self.norm.usage()]
-    }
-
-    pub fn init(&self) {
-        info!("BSA: initialising DMA zone");
-        self.dma.init();
-        info!("BSA: initialising DMA32 zone");
-        self.dma32.init();
-        info!("BSA: initialising NORM zone");
-        self.norm.init();
-        info!("BSA: all zones initialised");
-    }
-
-    pub fn alloc_pages(&mut self, order: usize, gfp: GfpFlags) -> Option<Paddr> {
-        trace!("BSA::alloc_pages: order={}, flags={:?}", order, gfp);
-        if order > MAX_ORDER {
-            error!("BSA: allocation order {} exceeds MAX_ORDER", order);
-            return None;
-        }
-        if gfp == GfpFlags::GFP_NORMAL || gfp == GfpFlags::GFP_KERNEL {
-            if let Some(pfn) = self.norm.alloc_pages(order) {
-                debug!("BSA: allocated from NORM zone, PFN {}", pfn);
-                return Some(Paddr::from_raw(pfn * PAGE_SIZE));
-            }
-            debug!("BSA: NORM zone failed, trying lower zones");
-        }
-        if gfp == GfpFlags::GFP_DMA32 || gfp == GfpFlags::GFP_KERNEL {
-            if let Some(pfn) = self.dma32.alloc_pages(order) {
-                debug!("BSA: allocated from DMA32 zone, PFN {}", pfn);
-                return Some(Paddr::from_raw(pfn * PAGE_SIZE));
-            }
-            debug!("BSA: DMA32 zone failed");
-        }
-        if gfp == GfpFlags::GFP_DMA || gfp == GfpFlags::GFP_KERNEL {
-            if let Some(pfn) = self.dma.alloc_pages(order) {
-                debug!("BSA: allocated from DMA zone, PFN {}", pfn);
-                return Some(Paddr::from_raw(pfn * PAGE_SIZE));
-            }
-            debug!("BSA: DMA zone failed");
-        }
-        warn!("BSA: failed to allocate order {} with flags {:?}", order, gfp);
-        None
-    }
-
-    pub fn free_pages(&mut self, paddr: Paddr) {
-        let pfn = paddr.to_raw() / PAGE_SIZE;
-        trace!("BSA::free_pages: PFN {}", pfn);
-        let order = pfn_to_page(pfn).order() as usize;
-        if order > MAX_ORDER {
-            error!("BSA: invalid order {} at PFN {:#X}", order, pfn);
-            return;
-        }
-        if pfn < DMA_END {
-            trace!("BSA: freeing in DMA zone");
-            self.dma.free_pages(pfn);
-        } else if pfn < DMA32_END {
-            trace!("BSA: freeing in DMA32 zone");
-            self.dma32.free_pages(pfn);
+impl Zone {
+    #[inline]
+    pub fn from_pfn(pfn: usize) -> Self {
+        let paddr = pfn * 4096;
+        if paddr < DMA_END {
+            Zone::DMA
+        } else if paddr < DMA32_END {
+            Zone::DMA32
         } else {
-            trace!("BSA: freeing in NORM zone");
-            self.norm.free_pages(pfn);
+            Zone::Normal
+        }
+    }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        match self {
+            Zone::DMA => 0,
+            Zone::DMA32 => 1,
+            Zone::Normal => 2,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Zone::DMA => "DMA",
+            Zone::DMA32 => "DMA32",
+            Zone::Normal => "Normal",
         }
     }
 }
 
-// Global instance
-static mut BSA: Option<Bsa> = None;
-use core::sync::atomic::{AtomicBool, Ordering};
-static BSA_INIT: AtomicBool = AtomicBool::new(false);
+struct FreeArea {
+    head: Option<usize>,
+    count: usize,
+}
+
+impl FreeArea {
+    const fn new() -> Self {
+        Self {
+            head: None,
+            count: 0,
+        }
+    }
+
+    fn add(&mut self, pfn: usize) {
+        if let Some(page) = pfm::get_page(pfn) {
+            page.private.store(
+                self.head.unwrap_or(0) as u32,
+                Ordering::Release
+            );
+            self.head = Some(pfn);
+            self.count += 1;
+        }
+    }
+
+    fn remove(&mut self) -> Option<usize> {
+        if let Some(pfn) = self.head {
+            if let Some(page) = pfm::get_page(pfn) {
+                let next = page.private.load(Ordering::Acquire) as usize;
+                self.head = if next == 0 { None } else { Some(next) };
+                self.count -= 1;
+                Some(pfn)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+}
+
+struct PerCpuCache {
+    pages: [Vec<usize, PCP_SIZE>; MAX_ORDER],
+}
+
+impl PerCpuCache {
+    const fn new() -> Self {
+        Self {
+            pages: [
+                Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+            ],
+        }
+    }
+
+    fn try_alloc(&mut self, order: usize) -> Option<usize> {
+        if order < MAX_ORDER {
+            self.pages[order].pop()
+        } else {
+            None
+        }
+    }
+
+    fn try_free(&mut self, order: usize, pfn: usize) -> bool {
+        if order < MAX_ORDER && !self.pages[order].is_full() {
+            let _ = self.pages[order].push(pfn);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[allow(dead_code)]
+    fn is_empty(&self, order: usize) -> bool {
+        order >= MAX_ORDER || self.pages[order].is_empty()
+    }
+
+    #[allow(dead_code)]
+    fn is_full(&self, order: usize) -> bool {
+        order < MAX_ORDER && self.pages[order].is_full()
+    }
+
+    #[allow(dead_code)]
+    fn clear(&mut self, order: usize) {
+        if order < MAX_ORDER {
+            self.pages[order].clear();
+        }
+    }
+}
+
+struct ZoneInner {
+    free_areas: [FreeArea; MAX_ORDER],
+    start_pfn: usize,
+    end_pfn: usize,
+}
+
+impl ZoneInner {
+    const fn new(start_pfn: usize, end_pfn: usize) -> Self {
+        Self {
+            free_areas: [ const { FreeArea::new() }; MAX_ORDER ],
+            start_pfn,
+            end_pfn,
+        }
+    }
+}
+
+struct ZoneData {
+    lock: Nutex<ZoneInner>,
+    pcp: [MaybeUninit<Nitex<PerCpuCache>>; arch::MAX_CPUS],
+    free_pages: AtomicUsize,
+    pcp_pages: AtomicUsize,
+}
+
+impl ZoneData {
+    const fn new(start_pfn: usize, end_pfn: usize) -> Self {
+        Self {
+            lock: Nutex::new(ZoneInner::new(start_pfn, end_pfn)),
+            pcp: [ const { MaybeUninit::uninit() }; arch::MAX_CPUS ],
+            free_pages: AtomicUsize::new(0),
+            pcp_pages: AtomicUsize::new(0),
+        }
+    }
+
+    #[inline]
+    unsafe fn pcp(&self, cpu_id: usize) -> &Nitex<PerCpuCache> {
+        unsafe { self.pcp[cpu_id].assume_init_ref() }
+    }
+
+    fn init_pcp(&self) {
+        for i in 0..arch::MAX_CPUS {
+            unsafe {
+                let ptr = self.pcp[i].as_ptr();
+                *(ptr as *mut Nitex<PerCpuCache>).as_mut_unchecked() = Nitex::new(PerCpuCache::new());
+            }
+        }
+    }
+}
+
+static ZONES: [ZoneData; 3] = [
+    ZoneData::new(0, 0),
+    ZoneData::new(0, 0),
+    ZoneData::new(0, 0),
+];
+
+#[inline]
+fn log2_ceil(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let mut order = 0;
+    let mut size = 1;
+    while size < n {
+        size <<= 1;
+        order += 1;
+    }
+    order
+}
 
 pub fn init() {
-    info!("BSA: initialising global instance");
-    if BSA_INIT.swap(true, Ordering::SeqCst) {
-        panic!("BSA already initialised");
+    info!("Initializing BSA");
+
+    for zone in &ZONES {
+        zone.init_pcp();
     }
-    let bsa = Bsa::new();
-    bsa.init();
-    unsafe { BSA = Some(bsa); }
-    info!("BSA: ready");
+
+    let (ema_start, ema_end) = ema::get_allocated_range();
+    let ema_start_pfn = ema_start / 4096;
+    let ema_end_pfn = (ema_end + 4095) / 4096;
+
+    let mut zone_boundaries = [(0usize, 0usize); 3];
+
+    let mut max_pfn = 0;
+    for region in pmr::iter() {
+        let end_pfn = (region.base + region.len) / 4096;
+        if end_pfn > max_pfn {
+            max_pfn = end_pfn;
+        }
+    }
+
+    let dma_end_pfn = DMA_END / 4096;
+    let dma32_end_pfn = DMA32_END / 4096;
+
+    zone_boundaries[0] = (0, core::cmp::min(max_pfn, dma_end_pfn));
+    zone_boundaries[1] = (
+        core::cmp::min(max_pfn, dma_end_pfn),
+        core::cmp::min(max_pfn, dma32_end_pfn)
+    );
+    zone_boundaries[2] = (core::cmp::min(max_pfn, dma32_end_pfn), max_pfn);
+
+    for (i, &(start, end)) in zone_boundaries.iter().enumerate() {
+        let zone = &ZONES[i];
+        let mut inner = zone.lock.lock();
+        inner.start_pfn = start;
+        inner.end_pfn = end;
+        drop(inner);
+
+        let zone_name = match i {
+            0 => "DMA",
+            1 => "DMA32",
+            2 => "Normal",
+            _ => "Unknown",
+        };
+
+        info!(
+            "Zone {} initialized: PFN {} - {} ({} pages)",
+            zone_name,
+            start,
+            end,
+            end.saturating_sub(start)
+        );
+    }
+
+    for region in pmr::iter() {
+        let start_pfn = region.base / 4096;
+        let end_pfn = (region.base + region.len) / 4096;
+
+        for pfn in start_pfn..end_pfn {
+            if let Some(page) = pfm::get_page(pfn) {
+                page.flags.store(
+                    pfm::PageFlags::ALLOCATED.bits(),
+                    Ordering::Release
+                );
+            }
+        }
+    }
+
+    if ema_end > ema_start {
+        for pfn in ema_start_pfn..ema_end_pfn {
+            if let Some(page) = pfm::get_page(pfn) {
+                page.flags.store(
+                    pfm::PageFlags::RESERVED.bits(),
+                    Ordering::Release
+                );
+            }
+        }
+        info!(
+            "Marked {} EMA pages as RESERVED (PFN {} - {})",
+            ema_end_pfn - ema_start_pfn,
+            ema_start_pfn,
+            ema_end_pfn
+        );
+    }
+
+    for region in pmr::iter() {
+        if region.kind == pmr::Kind::USABLE {
+            let start_pfn = region.base / 4096;
+            let end_pfn = (region.base + region.len) / 4096;
+
+            let align_mask = (1 << MAX_ORDER) - 1;
+            let aligned_start = (start_pfn + align_mask) & !align_mask;
+            let aligned_end = end_pfn & !align_mask;
+
+            let mut pfn = aligned_start;
+            while pfn < aligned_end {
+                let mut order = MAX_ORDER - 1;
+                while order > 0 {
+                    let block_size = 1 << order;
+                    if pfn % block_size == 0 && pfn + block_size <= aligned_end {
+                        break;
+                    }
+                    order -= 1;
+                }
+
+                let block_size = 1 << order;
+                if pfn + block_size <= aligned_end {
+                    for i in 0..block_size {
+                        if let Some(page) = pfm::get_page(pfn + i) {
+                            page.flags.store(
+                                pfm::PageFlags::FREE.bits(),
+                                Ordering::Release
+                            );
+                            if i == 0 {
+                                page.flags.fetch_or(pfm::PageFlags::BUDDY_HEAD.bits(), Ordering::Release);
+                                page.order.store(order as u8, Ordering::Release);
+                            }
+                        }
+                    }
+
+                    let zone = Zone::from_pfn(pfn);
+                    let zone_data = &ZONES[zone.index()];
+                    let mut inner = zone_data.lock.lock();
+                    inner.free_areas[order].add(pfn);
+                    zone_data.free_pages.fetch_add(block_size, Ordering::Release);
+                    drop(inner);
+
+                    pfn += block_size;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    let stats = usage();
+    info!(
+        "Initialized. Free pages: DMA={}, DMA32={}, Normal={}",
+        stats[0], stats[1], stats[2]
+    );
 }
 
-#[allow(static_mut_refs)]
-pub fn alloc_pages(order: usize, gfp: GfpFlags) -> Option<Paddr> {
-    trace!("BSA::alloc_pages (global): order={}", order);
-    unsafe { BSA.as_mut().unwrap().alloc_pages(order, gfp) }
+pub fn alloc(count: usize) -> Paddr {
+    if count == 0 {
+        return Paddr::from_raw(0);
+    }
+
+    let order = log2_ceil(count);
+    if order >= MAX_ORDER {
+        error!("Allocation too large ({} pages, order {})", count, order);
+        return Paddr::from_raw(0);
+    }
+
+    let cpu_id = arch::current_cpu();
+
+    for zone_idx in [1, 2, 0] {
+        let zone = &ZONES[zone_idx];
+        
+        {
+            let pcp = unsafe { zone.pcp(cpu_id) };
+            let mut pcp_guard = pcp.lock();
+            if let Some(pfn) = pcp_guard.try_alloc(order) {
+                zone.pcp_pages.fetch_sub(1 << order, Ordering::Release);
+                return Paddr::from_raw(pfn * 4096);
+            }
+        }
+
+        if let Some(pfn) = alloc_from_zone(zone_idx, order) {
+            refill_pcp(zone_idx, order, cpu_id);
+            return Paddr::from_raw(pfn * 4096);
+        }
+    }
+
+    error!("Out of memory (requested {} pages)", count);
+    Paddr::from_raw(0)
 }
 
-#[allow(static_mut_refs)]
-pub fn free_pages(paddr: Paddr) {
-    trace!("BSA::free_pages (global): paddr={:#X}", paddr.to_raw());
-    unsafe { BSA.as_mut().unwrap().free_pages(paddr) }
+fn refill_pcp(zone_idx: usize, order: usize, cpu_id: usize) {
+    let zone = &ZONES[zone_idx];
+    let mut inner = zone.lock.lock();
+    let pcp = unsafe { zone.pcp(cpu_id) };
+    let mut pcp_guard = pcp.lock();
+
+    let target_count = PCP_SIZE / 2;
+    let mut count = 0;
+
+    while count < target_count {
+        let mut found_order = order;
+        while found_order < MAX_ORDER {
+            if !inner.free_areas[found_order].is_empty() {
+                break;
+            }
+            found_order += 1;
+        }
+
+        if found_order >= MAX_ORDER {
+            break;
+        }
+
+        let pfn = match inner.free_areas[found_order].remove() {
+            Some(pfn) => pfn,
+            None => break,
+        };
+
+        while found_order > order {
+            found_order -= 1;
+            let buddy_pfn = pfn + (1 << found_order);
+
+            for i in 0..(1 << found_order) {
+                if let Some(page) = pfm::get_page(buddy_pfn + i) {
+                    if i == 0 {
+                        page.flags.store(
+                            (pfm::PageFlags::FREE | pfm::PageFlags::BUDDY_HEAD).bits(),
+                            Ordering::Release,
+                        );
+                        page.order.store(found_order as u8, Ordering::Release);
+                    } else {
+                        page.flags.store(pfm::PageFlags::FREE.bits(), Ordering::Release);
+                    }
+                }
+            }
+
+            inner.free_areas[found_order].add(buddy_pfn);
+        }
+
+        if pcp_guard.try_free(order, pfn) {
+            if let Some(page) = pfm::get_page(pfn) {
+                page.flags.store(
+                    (pfm::PageFlags::ALLOCATED | pfm::PageFlags::BUDDY_HEAD).bits(),
+                    Ordering::Release,
+                );
+                page.order.store(order as u8, Ordering::Release);
+            }
+            zone.free_pages.fetch_sub(1 << order, Ordering::Release);
+            zone.pcp_pages.fetch_add(1 << order, Ordering::Release);
+            count += 1;
+        } else {
+            if let Some(page) = pfm::get_page(pfn) {
+                page.flags.store(
+                    (pfm::PageFlags::FREE | pfm::PageFlags::BUDDY_HEAD).bits(),
+                    Ordering::Release,
+                );
+                page.order.store(order as u8, Ordering::Release);
+            }
+            inner.free_areas[order].add(pfn);
+            break;
+        }
+    }
 }
 
-#[allow(static_mut_refs)]
+fn free_to_zone(zone_idx: usize, mut pfn: usize, mut order: usize) {
+    let zone = &ZONES[zone_idx];
+    let mut inner = zone.lock.lock();
+
+    if let Some(page) = pfm::get_page(pfn) {
+        page.flags.store(
+            (pfm::PageFlags::FREE | pfm::PageFlags::BUDDY_HEAD).bits(),
+            Ordering::Release,
+        );
+        page.order.store(order as u8, Ordering::Release);
+    }
+
+    while order < MAX_ORDER - 1 {
+        let buddy_pfn = pfn ^ (1 << order);
+
+        if let Some(buddy_page) = pfm::get_page(buddy_pfn) {
+            let buddy_flags = pfm::PageFlags::from_bits_truncate(
+                buddy_page.flags.load(Ordering::Acquire),
+            );
+            let buddy_order = buddy_page.order.load(Ordering::Acquire) as usize;
+
+            if buddy_flags.contains(pfm::PageFlags::FREE)
+                && buddy_flags.contains(pfm::PageFlags::BUDDY_HEAD)
+                && buddy_order == order
+            {
+                remove_from_free_list(&mut inner.free_areas[order], buddy_pfn);
+
+                if buddy_pfn < pfn {
+                    pfn = buddy_pfn;
+                }
+
+                order += 1;
+                continue;
+            }
+        }
+
+        break;
+    }
+
+    if let Some(page) = pfm::get_page(pfn) {
+        page.flags.store(
+            (pfm::PageFlags::FREE | pfm::PageFlags::BUDDY_HEAD).bits(),
+            Ordering::Release,
+        );
+        page.order.store(order as u8, Ordering::Release);
+    }
+
+    inner.free_areas[order].add(pfn);
+    zone.free_pages.fetch_add(1 << order, Ordering::Release);
+}
+
+fn remove_from_free_list(free_area: &mut FreeArea, target_pfn: usize) {
+    if free_area.head == Some(target_pfn) {
+        free_area.remove();
+        return;
+    }
+
+    let mut current = free_area.head;
+    let max_steps = free_area.count + 2;
+    let mut steps = 0;
+
+    while let Some(pfn) = current {
+        steps += 1;
+        if steps > max_steps {
+            error!(
+                "remove_from_free_list: CYCLE DETECTED! target_pfn={}, cache free_area count={}",
+                target_pfn, free_area.count
+            );
+            return;
+        }
+
+        if let Some(page) = pfm::get_page(pfn) {
+            let next = page.private.load(Ordering::Acquire) as usize;
+            if next == target_pfn {
+                if let Some(target_page) = pfm::get_page(target_pfn) {
+                    let target_next = target_page.private.load(Ordering::Acquire);
+                    page.private.store(target_next, Ordering::Release);
+                }
+                free_area.count -= 1;
+                return;
+            }
+            current = if next == 0 { None } else { Some(next) };
+        } else {
+            break;
+        }
+    }
+
+    warn!(
+        "remove_from_free_list: PFN {} not found in free list (searched {} entries)",
+        target_pfn, steps
+    );
+}
+
+fn drain_pcp(zone_idx: usize, order: usize, cpu_id: usize) {
+    let zone = &ZONES[zone_idx];
+    let mut to_free = Vec::<usize, 32>::new();
+    
+    {
+        let pcp = unsafe { zone.pcp(cpu_id) };
+        let mut pcp_guard = pcp.lock();
+        let drain_count = pcp_guard.pages[order].len() / 2;
+        for _ in 0..drain_count {
+            if let Some(pfn) = pcp_guard.pages[order].pop() {
+                zone.pcp_pages.fetch_sub(1 << order, Ordering::Release);
+                let _ = to_free.push(pfn);
+            }
+        }
+    }
+    
+    for pfn in to_free {
+        free_to_zone(zone_idx, pfn, order);
+    }
+}
+
 pub fn usage() -> [usize; 3] {
-    unsafe { BSA.as_ref().unwrap().usage() }
+    [
+        ZONES[0].free_pages.load(Ordering::Acquire) + ZONES[0].pcp_pages.load(Ordering::Acquire),
+        ZONES[1].free_pages.load(Ordering::Acquire) + ZONES[1].pcp_pages.load(Ordering::Acquire),
+        ZONES[2].free_pages.load(Ordering::Acquire) + ZONES[2].pcp_pages.load(Ordering::Acquire),
+    ]
+}
+
+pub fn alloc_from_zone_direct(zone: Zone, count: usize) -> Paddr {
+    if count == 0 {
+        return Paddr::from_raw(0);
+    }
+
+    let order = log2_ceil(count);
+    if order >= MAX_ORDER {
+        return Paddr::from_raw(0);
+    }
+
+    let zone_data = &ZONES[zone.index()];
+    let cpu_id = arch::current_cpu();
+
+    {
+        let pcp = unsafe { zone_data.pcp(cpu_id) };
+        let mut pcp_guard = pcp.lock();
+        if let Some(pfn) = pcp_guard.try_alloc(order) {
+            zone_data.pcp_pages.fetch_sub(1 << order, Ordering::Release);
+            return Paddr::from_raw(pfn * 4096);
+        }
+    }
+
+    if let Some(pfn) = alloc_from_zone(zone.index(), order) {
+        refill_pcp(zone.index(), order, cpu_id);
+        Paddr::from_raw(pfn * 4096)
+    } else {
+        Paddr::from_raw(0)
+    }
+}
+
+fn alloc_from_zone(zone_idx: usize, order: usize) -> Option<usize> {
+    let zone = &ZONES[zone_idx];
+    let mut inner = zone.lock.lock();
+
+    let mut found_order = order;
+    while found_order < MAX_ORDER {
+        if !inner.free_areas[found_order].is_empty() {
+            break;
+        }
+        found_order += 1;
+    }
+
+    if found_order >= MAX_ORDER {
+        return None;
+    }
+
+    let pfn = inner.free_areas[found_order].remove()?;
+
+    while found_order > order {
+        found_order -= 1;
+        let buddy_pfn = pfn + (1 << found_order);
+
+        for i in 0..(1 << found_order) {
+            if let Some(page) = pfm::get_page(buddy_pfn + i) {
+                if i == 0 {
+                    page.flags.store(
+                        (pfm::PageFlags::FREE | pfm::PageFlags::BUDDY_HEAD).bits(),
+                        Ordering::Release,
+                    );
+                    page.order.store(found_order as u8, Ordering::Release);
+                } else {
+                    page.flags.store(pfm::PageFlags::FREE.bits(), Ordering::Release);
+                }
+            }
+        }
+
+        inner.free_areas[found_order].add(buddy_pfn);
+    }
+
+    if let Some(page) = pfm::get_page(pfn) {
+        page.flags.store(
+            (pfm::PageFlags::ALLOCATED | pfm::PageFlags::BUDDY_HEAD).bits(),
+            Ordering::Release,
+        );
+        page.order.store(order as u8, Ordering::Release);
+    }
+
+    let block_size = 1 << order;
+    zone.free_pages.fetch_sub(block_size, Ordering::Release);
+
+    drop(inner);
+
+    Some(pfn)
+}
+
+pub fn free(paddr: Paddr) {
+    let pfn = paddr.to_raw() / 4096;
+
+    if let Some(page) = pfm::get_page(pfn) {
+        let order = page.order.load(Ordering::Acquire) as usize;
+        let zone = Zone::from_pfn(pfn);
+        let zone_data = &ZONES[zone.index()];
+        let cpu_id = arch::current_cpu();
+
+        {
+            let pcp = unsafe { zone_data.pcp(cpu_id) };
+            let mut pcp_guard = pcp.lock();
+            if pcp_guard.try_free(order, pfn) {
+                page.flags.store(
+                    (pfm::PageFlags::ALLOCATED | pfm::PageFlags::BUDDY_HEAD).bits(),
+                    Ordering::Release,
+                );
+                zone_data.pcp_pages.fetch_add(1 << order, Ordering::Release);
+                return;
+            }
+        }
+
+        free_to_zone(zone.index(), pfn, order);
+        drain_pcp(zone.index(), order, cpu_id);
+    }
 }

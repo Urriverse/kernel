@@ -5,16 +5,16 @@ use core::{
 };
 
 #[derive(Debug)]
-pub struct Nutex<T>
+pub struct Litex<T>
 {
     lock: AtomicBool,
     data: UnsafeCell<T>,
 }
 
-unsafe impl<T: Send> Send for Nutex<T> {}
-unsafe impl<T: Send> Sync for Nutex<T> {}
+unsafe impl<T: Send> Send for Litex<T> {}
+unsafe impl<T: Send> Sync for Litex<T> {}
 
-impl<T> Nutex<T>
+impl<T> Litex<T>
 {
     pub const fn new(t: T) -> Self
     {
@@ -25,7 +25,13 @@ impl<T> Nutex<T>
         }
     }
 
-    pub fn lock(&self) -> NutexGuard<'_, T>
+    pub unsafe fn inner(&self) -> &'_ mut T {
+        unsafe {
+            self.data.as_mut_unchecked()
+        }
+    }
+
+    pub fn lock(&self) -> LitexGuard<'_, T>
     {
         while self
             .lock
@@ -47,14 +53,14 @@ impl<T> Nutex<T>
             asm!("cli", options(nomem, nostack, preserves_flags));
         }
 
-        NutexGuard
+        LitexGuard
         {
             mutex: self,
             saved_if: (rflags & (1 << 9)) != 0,
         }
     }
 
-    pub fn try_lock(&self) -> Option<NutexGuard<'_, T>> {
+    pub fn try_lock(&self) -> Option<LitexGuard<'_, T>> {
         if self
             .lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -71,7 +77,7 @@ impl<T> Nutex<T>
                 );
                 asm!("cli", options(nomem, nostack, preserves_flags));
             }
-            Some(NutexGuard { mutex: self, saved_if: (rflags & (1 << 9)) != 0 })
+            Some(LitexGuard { mutex: self, saved_if: (rflags & (1 << 9)) != 0 })
         }
         else
         {
@@ -80,13 +86,13 @@ impl<T> Nutex<T>
     }
 }
 
-pub struct NutexGuard<'a, T>
+pub struct LitexGuard<'a, T>
 {
-    mutex: &'a Nutex<T>,
+    mutex: &'a Litex<T>,
     saved_if: bool,
 }
 
-impl<'a, T> core::ops::Deref for NutexGuard<'a, T>
+impl<'a, T> core::ops::Deref for LitexGuard<'a, T>
 {
     type Target = T;
     fn deref(&self) -> &'a T
@@ -95,7 +101,7 @@ impl<'a, T> core::ops::Deref for NutexGuard<'a, T>
     }
 }
 
-impl<T> core::ops::DerefMut for NutexGuard<'_, T>
+impl<T> core::ops::DerefMut for LitexGuard<'_, T>
 {
     fn deref_mut(&mut self) -> &mut T
     {
@@ -103,7 +109,7 @@ impl<T> core::ops::DerefMut for NutexGuard<'_, T>
     }
 }
 
-impl<T> Drop for NutexGuard<'_, T>
+impl<T> Drop for LitexGuard<'_, T>
 {
     fn drop(&mut self)
     {

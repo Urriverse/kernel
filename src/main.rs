@@ -1,83 +1,94 @@
-//! Kernel entry point and main initialisation.
-
 #![no_std]
 #![no_main]
-#![feature(ptr_alignment_type)]
-#![feature(unboxed_closures)]
-#![allow(unused)]
 
-use crate::mem::bsa::GfpFlags;
+#![feature(unsafe_cell_access)]
+#![feature(abi_x86_interrupt)]
+#![feature(const_trait_impl)]
+#![feature(likely_unlikely)]
+#![feature(const_cmp)]
 
-#[macro_use] pub extern crate extrum;
-#[macro_use] pub extern crate bitflags;
-#[macro_use] pub extern crate lazy_static;
-extern crate alloc;
+#![cfg_attr(not(debug_assertions), allow(unused_assignments))]
+
+#[allow(unused)] #[macro_use] pub extern crate extrum;
+#[allow(unused)] #[macro_use] pub extern crate bitflags;
+#[allow(unused)] #[macro_use] pub extern crate lazy_static;
+#[allow(unused)] #[macro_use] pub extern crate alloc;
 
 #[macro_use] mod macros;
+#[macro_use] pub mod driverkit;
 pub mod rt;
 pub mod sync;
 pub mod kmsg;
 pub mod mem;
+pub mod arch;
+pub mod dev;
+pub mod sched;
+pub mod vfs;
 
-// The kernel entry point.
-entry!
-{
-    info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
-    mem::pmr::dump();
-    mem::ema::init();
+limine! { pub SMPR <= MpRequest: 0 }
 
-    // Simple allocation test using the unified page allocator.
-    let x = mem::upa::alloc(4);
-    mem::upa::free(x);
+lazy_static! {
+    static ref SMP: &'static limine::request::Response<limine::request::MpRespData> = SMPR.response().expect("Can't obtain SMP info");
+}
 
-    let old = mem::ptm::Polen::from_exco(mem::ptm::Exco::current());
+fueue! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT }
 
-    debug!("Old PTM dump:");
-    for r in old.report::<128>()
-    {
-        trace!("~ {}", r);
+entry! {
+    for BSP {
+        arch::early_init_bs();
+
+        start_aps!();
+
+        arch::init_bsp();
+
+        ARCH_INIT.open();
+
+        mem::init_bsp();
+
+        MEM_INIT.open();
+
+        arch::late_init_bsp();
+
+        arch::late_init();
+
+        let ticks_per_10ms = crate::arch::timer::get_ticks_per_10ms();
+        crate::sched::init(ticks_per_10ms);
+
+        LATE_INIT.open();
+
+        dev::init();
+
+        DEV_INIT.open();
+
+        crate::sched::spawn_kernel_task(init_task, crate::sched::task::Priority(0), "init");
     }
 
-    // Build page tables that map HHDM and the kernel.
-    let mut ptm = mem::ptm::Polen::reference();
+    for AP {
+        arch::early_init();
 
-    debug!("PTM dump:");
-    for r in ptm.report::<64>()
-    {
-        trace!("~ {}", r);
+        ARCH_INIT.wait();
+
+        arch::init_ap();
+
+        MEM_INIT.wait();
+
+        mem::init_ap();
+
+        LATE_INIT.wait();
+
+        arch::late_init();
+
+        DEV_INIT.wait();
     }
+}
 
-    unsafe { ptm.activate(); }
-
-    mem::pfm::init(&mut ptm);
-
-    mem::bsa::init();
-
-    mem::upa::migrate();
-
-    mem::soa::init();
-
-    // let x = mem::bsa::alloc_pages(4, GfpFlags::GFP_KERNEL);
-    let x = mem::upa::alloc(1);
-
-    // ── SOA allocation / deallocation smoke test ────────────────────────
-    let obj_a = mem::soa::alloc(16).expect("SOA: 16-byte alloc failed");
-    let obj_b = mem::soa::alloc(64).expect("SOA: 64-byte alloc failed");
-    info!("SOA test: obj_a={:#X}  obj_b={:#X}", obj_a as usize, obj_b as usize);
-    unsafe { mem::soa::dealloc(obj_a); }
-    unsafe { mem::soa::dealloc(obj_b); }
-    // Re‑alloc should reuse the just‑freed slot.
-    let _reuse = mem::soa::alloc(16).expect("SOA: 16-byte re-alloc failed");
-    unsafe { mem::soa::dealloc(_reuse); }
-    info!("SOA: smoke test passed");
-
-    for (i, &(pages, allocs)) in mem::soa::usage().iter().enumerate() {
-        if pages > 0 {
-            debug!("SOA cache[{}]: {} slab pages, {} allocs",
-                   i, pages, allocs);
+fn init_task() {
+    crate::info!("init_task started. I am PID 1.");
+    
+    loop {
+        crate::info!("init: waiting for any child to exit...");
+        if let Some((id, code)) = crate::sched::wait_any() {
+            crate::info!("init: reaped zombie task {:?}, exit code: {}", id, code);
         }
     }
-
-    debug!("EMA usage is {} KiB", mem::ema::usage() << 2);
-    debug!("BSA usage is {} KiB", mem::bsa::usage().iter().sum::<usize>() << 2);
 }

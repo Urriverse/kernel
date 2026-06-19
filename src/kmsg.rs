@@ -1,16 +1,3 @@
-//! Kernel messaging subsystem.
-//!
-//! This module provides a global logging facility that dispatches log messages
-//! to registered [`Sink`]s. Log levels range from `Panic` (most severe) down to
-//! `Trace` (verbose debug). The logging macros (`info!`, `warn!`, etc.) are
-//! defined in [`crate::macros`].
-//!
-//! # Example
-//! ```
-//! info!("Hello, world!");
-//! error!("Something went wrong: {}", error_code);
-//! ```
-
 use core::fmt::Write;
 
 use crate::sync::Nutex;
@@ -18,18 +5,10 @@ use heapless::{Vec, String};
 
 mod dev;
 
-/// Maximum length of a formatted log message (in bytes).
 const MAX_MSG_LEN: usize = 1024;
 
-/// A statically allocated log message buffer.
 type Msg = String<MAX_MSG_LEN>;
 
-/// Convert a 4‑byte string literal into a `u32` identifier.
-///
-/// This is used to create unique `kind` values for sinks.
-///
-/// # Panics
-/// Panics if the input string is not exactly 4 bytes long.
 pub const fn str4_to_u32(s: &str) -> u32
 {
     let b = s.as_bytes();
@@ -40,13 +19,10 @@ pub const fn str4_to_u32(s: &str) -> u32
      (b[3] as u32)
 }
 
-// Format string used for log messages. The `lowlog` feature produces a shorter
-// format (no file/line).
-#[cfg(    feature = "lowlog" )] macro_rules! FMT {() => {"~ {:7.3} : {}: {}"}}
-#[cfg(not(feature = "lowlog"))] macro_rules! FMT {() => {"~ {:7.3} : {:>20}:{:<3}: {}: {}"}}
+#[cfg(    feature = "lowlog" )] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>24} : {}: {}"}}
+#[cfg(not(feature = "lowlog"))] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>20}:{:<3}: {:>24} : {}: {}"}}
 
 bitflags! {
-    /// Attributes describing a log sink’s capabilities and importance.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct SinkAttrs: u32
     {
@@ -63,31 +39,25 @@ bitflags! {
         /// The sink supports ANSI colour codes (e.g., a TTY).
         const Pretty   = 1 << 5;
         // More attributes can be added.
+        const _ = !0;
     }
 }
 
-/// Identification data for a log sink.
 pub struct SinkIdent
 {
     /// Attributes of the sink.
     pub attrs: SinkAttrs,
-    /// A `u32` identifier (often created with [`str4_to_u32`]).
+    /// A `u32` sink kind identifier (often created with [`str4_to_u32`]).
     pub kind: u32,
 }
 
-/// A trait for log output sinks.
-///
-/// Sinks are `&'static` and must be `Sync` so they can be used concurrently.
 pub trait Sink: Sync
 {
-    /// Write a complete log line to the sink.
     fn write(&self, s: &str);
 
-    /// Return the sink’s identification and attributes.
     fn kind(&self) -> SinkIdent;
 }
 
-/// Log severity level.
 #[derive(Clone, Copy)]
 pub enum AttLvl
 {
@@ -107,7 +77,6 @@ pub enum AttLvl
 
 impl AttLvl
 {
-    /// Return the plain‑text name of the level (uppercase, fixed width).
     fn as_str(self) -> &'static str
     {
         match self
@@ -121,7 +90,6 @@ impl AttLvl
         }
     }
 
-    /// Return the ANSI‑coloured name of the level.
     fn pretty(self) -> &'static str
     {
         match self
@@ -136,33 +104,23 @@ impl AttLvl
     }
 }
 
-/// Global list of registered log sinks, protected by a [`Nutex`].
 pub static SINKS: Nutex<Vec<&'static dyn Sink, 256>> = Nutex::new(Vec::new());
 
-/// Register a new log sink.
-///
-/// The sink must be `&'static` and implement the [`Sink`] trait.
 pub fn add(sink: &'static dyn Sink)
 {
     let _ = SINKS.lock().push(sink);
 }
 
-/// Initialise the logging subsystem.
-///
-/// Currently registers the development sink (`dev::SINK`) when the `devlog`
-/// feature is enabled.
 pub fn init()
 {
     #[cfg(feature = "devlog")] add(*dev::SINK);
 }
 
-/// Emit a formatted log message to all registered sinks.
-///
-/// This function is called by the logging macros. It formats the message,
-/// adds file/line information (unless `lowlog` is enabled), and writes to
-/// every sink.
-pub fn log(al: AttLvl, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>)
+pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>)
 {
+    #[cfg(feature = "lowlog")] let _ = file;
+    #[cfg(feature = "lowlog")] let _ = line;
+
     const INLEN: usize = MAX_MSG_LEN >> 1;
     let mut c = String::<INLEN>::new();
     let _ = c.write_fmt(fa);
@@ -175,40 +133,47 @@ pub fn log(al: AttLvl, file: &'static str, line: u32, fa: core::fmt::Arguments<'
 
         if (sink.kind().attrs & SinkAttrs::Pretty) != SinkAttrs::empty()
         {
-            #[cfg(    feature = "lowlog" )] m.write_fmt(format_args!(FMT!(), 0.0f32, al.pretty(), c.as_str()));
-            #[cfg(not(feature = "lowlog"))] m.write_fmt(format_args!(FMT!(), 0.0f32, file, line, al.pretty(), c.as_str()));
+            #[cfg(    feature = "lowlog" )]
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, al.pretty(), c.as_str()));
+            #[cfg(not(feature = "lowlog"))]
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, al.pretty(), c.as_str()));
         }
         else
         {
-            #[cfg(    feature = "lowlog" )] m.write_fmt(format_args!(FMT!(), 0.0f32, al.as_str(), c.as_str()));
-            #[cfg(not(feature = "lowlog"))] m.write_fmt(format_args!(FMT!(), 0.0f32, file, line, al.as_str(), c.as_str()));
+            #[cfg(    feature = "lowlog" )]
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, al.as_str(), c.as_str()));
+            #[cfg(not(feature = "lowlog"))]
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, al.as_str(), c.as_str()));
         }
 
         sink.write(m.as_str());
     }
 }
 
-/// Emit a static string log message to all registered sinks.
-///
-/// Equivalent to `log` but without formatting.
-pub fn str_log(al: AttLvl, file: &'static str, line: u32, s: &str)
+pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str)
 {
+    #[cfg(feature = "lowlog")] let _ = file;
+    #[cfg(feature = "lowlog")] let _ = line;
+
     let g = SINKS.lock();
 
     for sink in &*g
     {
         let mut m = Msg::new();
 
-        if (sink.kind().attrs & SinkAttrs::Pretty) != SinkAttrs::empty()
-        {
-            #[cfg(    feature = "lowlog" )] m.write_fmt(format_args!(FMT!(), 0.0f32, al.pretty(), s));
-            #[cfg(not(feature = "lowlog"))] m.write_fmt(format_args!(FMT!(), 0.0f32, file, line, al.pretty(), s));
+        let l;
+
+        if (sink.kind().attrs & SinkAttrs::Pretty) != SinkAttrs::empty() {
+            l = al.pretty();
+        } else {
+            l = al.as_str();
         }
-        else
-        {
-            #[cfg(    feature = "lowlog" )] m.write_fmt(format_args!(FMT!(), 0.0f32, al.as_str(), s));
-            #[cfg(not(feature = "lowlog"))] m.write_fmt(format_args!(FMT!(), 0.0f32, file, line, al.as_str(), s));
-        }
+
+        #[cfg(    feature = "lowlog" )]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, l, s));
+
+        #[cfg(not(feature = "lowlog"))]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, l, s));
 
         sink.write(m.as_str());
     }

@@ -1,26 +1,128 @@
-//! ptm execution core — x86_64 4‑level paging implementation.
-//!
-//! This module provides the `Exco` struct which manages a page‑table hierarchy.
-//! It is split into several `impl` blocks for clarity:
-//!
-//! 1. **Construction and destruction** — `new`, `dup`, `current`, `clean`.
-//! 2. **Report** — `report` walks the entire hierarchy and collects mapped areas.
-//! 3. **Mapping** — `map4k`, `map2m`, `map1g`.
-//! 4. **Unmapping** — `unmap`.
-//! 5. **Splitting** — `split2m`, `split1g`.
-//! 6. **Merging** — `merge2m`, `merge1g`.
-//! 7. **Fallible (`try_*`) variants** — each returns a `Result`.
+use crate::mem::kdm::Paddr;
+
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    pub struct EntryFlags: u64
+    {
+        const PRESENT         = 1 <<  0;
+        const WRITABLE        = 1 <<  1;
+        const USER_ACCESSIBLE = 1 <<  2;
+        const WRITE_THROUGH   = 1 <<  3;
+        const CACHE_DISABLE   = 1 <<  4;
+        const ACCESSED        = 1 <<  5;
+        const DIRTY           = 1 <<  6;
+        const HUGE_PAGE       = 1 <<  7;
+        const GLOBAL          = 1 <<  8;
+        const NO_EXECUTE      = 1 << 63;
+
+        const COPY_ON_WRITE   = 1 << 52;
+        const FILE_MAPPED     = 1 << 53;
+        const SWAPPED         = 1 << 54;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Entry(u64);
+
+impl Entry
+{
+    pub const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
+
+    pub const AVAILABLE_MASK: u64 = 0x7ff0_0000_0000_0e00;
+
+    pub const ADDRESS_SHIFT: u32 = 12;
+
+    #[inline]
+    pub const fn new(physical_address: Paddr, flags: EntryFlags) -> Self
+    {
+        let addr_part = physical_address.to_raw() as u64 & Self::ADDRESS_MASK;
+        Self(addr_part | flags.bits())
+    }
+
+    #[inline]
+    pub fn as_u64(&self) -> u64
+    {
+        self.0
+    }
+
+    #[inline]
+    pub fn flags(&self) -> EntryFlags
+    {
+        EntryFlags::from_bits_truncate(self.0)
+    }
+
+    #[inline]
+    pub fn set_flags(&mut self, flags: EntryFlags)
+    {
+        self.0 = (self.0 & !EntryFlags::all().bits()) | flags.bits();
+    }
+
+    #[inline]
+    pub fn address(&self) -> Paddr
+    {
+        Paddr::from_raw((self.0 & Self::ADDRESS_MASK) as usize)
+    }
+
+    #[inline]
+    pub fn set_address(&mut self, paddr: Paddr)
+    {
+        let addr = paddr.to_raw() as u64;
+        self.0 = (self.0 & !Self::ADDRESS_MASK) | (addr & Self::ADDRESS_MASK);
+    }
+
+    #[inline]
+    pub fn is_present(&self) -> bool
+    {
+        self.flags().contains(EntryFlags::PRESENT)
+    }
+
+    #[inline]
+    pub fn is_writable(&self) -> bool
+    {
+        self.flags().contains(EntryFlags::WRITABLE)
+    }
+
+    #[inline]
+    pub fn is_executable(&self) -> bool
+    {
+        !self.flags().contains(EntryFlags::NO_EXECUTE)
+    }
+}
+
+impl From<u64> for Entry
+{
+    #[inline]
+    fn from(raw: u64) -> Self
+    {
+        Entry(raw)
+    }
+}
+
+impl From<Entry> for u64
+{
+    #[inline]
+    fn from(entry: Entry) -> Self
+    {
+        entry.0
+    }
+}
+
+impl Default for Entry
+{
+    #[inline]
+    fn default() -> Self
+    {
+        Entry(0)
+    }
+}
 
 use core::ops::{Index, IndexMut};
 use heapless::Vec;
 
-use super::*;
-use crate::mem::kdm::{Paddr, Vaddr};
+use crate::mem::kdm::Vaddr;
 use crate::mem::upa;
-
-// ============================================================================
-// Address → index helpers  (4‑level paging)
-// ============================================================================
 
 #[inline]
 fn pml4_i(vaddr: usize) -> usize {
@@ -42,19 +144,11 @@ fn pt_i(vaddr: usize) -> usize {
     (vaddr >> 12) & 0x1ff
 }
 
-// ============================================================================
-// Page masks
-// ============================================================================
-
 const MASK_4K: usize = 0xfff;
 const MASK_2M: usize = 0x1f_ffff;
 const MASK_1G: usize = 0x3fff_ffff;
 
-// ============================================================================
-// Table allocation / deallocation helpers
-// ============================================================================
-
-pub(crate) fn alloc_tab_zeroed() -> &'static mut Tab {
+pub fn alloc_tab_zeroed() -> &'static mut Tab {
     let paddr = upa::alloc(1);
     let vaddr = paddr.to_virt();
     let tab: &'static mut Tab = vaddr.to_ref_mut();
@@ -68,47 +162,33 @@ fn free_tab(paddr: Paddr) {
     upa::free(paddr);
 }
 
-pub(crate) fn tab_from_entry(entry: &Entry) -> &'static mut Tab {
+pub fn tab_from_entry(entry: &Entry) -> &'static mut Tab {
     entry.address().to_virt().to_ref_mut()
 }
 
-pub(crate) fn tab_from_entry_const(entry: &Entry) -> &Tab {
+pub fn tab_from_entry_const(entry: &Entry) -> &Tab {
     entry.address().to_virt().to_ref()
 }
 
-/// Check whether an entry describes a huge page (2 MiB or 1 GiB).
-pub(super) fn is_huge(entry: &Entry) -> bool {
+pub fn is_huge(entry: &Entry) -> bool {
     entry.flags().contains(EntryFlags::HUGE_PAGE)
 }
 
-// ============================================================================
-// TLB maintenance — free function so anyone can use it
-// ============================================================================
-
-/// Flush a single page from the TLB using `invlpg`.
-pub(super) fn flush_tlb(vaddr: usize) {
+pub fn flush_tlb(vaddr: usize) {
     unsafe {
         core::arch::asm!("invlpg [{}]", in(reg) vaddr, options(nostack, preserves_flags));
     }
 }
 
-/// Reload CR3 to flush the entire TLB.
 #[allow(dead_code)]
-pub(super) fn flush_all(cr3: u64) {
+pub fn flush_all(cr3: u64) {
     debug!("TLB flush-all CR3 {:#018X}", cr3);
     unsafe {
         core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack));
     }
 }
 
-// ============================================================================
-// Walking helpers — public(super) so the policy engine can use them.
-// ============================================================================
-
-/// Mutable walk — create intermediate tables if `create == true`.
-///
-/// `level_hint`: 0 → PT (4 KiB), 1 → PD (2 MiB), 2 → PDPT (1 GiB).
-pub(super) fn walk_entry_mut<'a>(
+pub fn walk_entry_mut<'a>(
     root: &'a mut Tab,
     vaddr: usize,
     level_hint: u8,
@@ -119,7 +199,6 @@ pub(super) fn walk_entry_mut<'a>(
     let pd_idx   = pd_i(vaddr);
     let pt_idx   = pt_i(vaddr);
 
-    // ---- PML4
     let pml4_entry = &mut root.0[pml4_idx];
     if !pml4_entry.is_present() {
         if !create {
@@ -133,7 +212,6 @@ pub(super) fn walk_entry_mut<'a>(
         debug!("Created PML4[{}] at {:#018X}", pml4_idx, pml4_entry.address().to_raw());
     }
 
-    // ---- PDPT
     let pdpt = tab_from_entry(pml4_entry);
     let pdpt_entry = &mut pdpt.0[pdpt_idx];
 
@@ -156,7 +234,6 @@ pub(super) fn walk_entry_mut<'a>(
         return Err("1 GiB huge page encountered - split first");
     }
 
-    // ---- PD
     let pd = tab_from_entry(pdpt_entry);
     let pd_entry = &mut pd.0[pd_idx];
 
@@ -180,7 +257,6 @@ pub(super) fn walk_entry_mut<'a>(
         return Err("2 MiB huge page encountered - split first");
     }
 
-    // ---- PT
     let pt = tab_from_entry(pd_entry);
     let pt_entry = &mut pt.0[pt_idx];
 
@@ -191,8 +267,7 @@ pub(super) fn walk_entry_mut<'a>(
     Ok(pt_entry)
 }
 
-/// Immutable walk — never creates tables, only reads.
-pub(super) fn walk_entry<'a>(
+pub fn walk_entry<'a>(
     root: &'a Tab,
     vaddr: usize,
     level_hint: u8,
@@ -202,7 +277,6 @@ pub(super) fn walk_entry<'a>(
     let pd_idx   = pd_i(vaddr);
     let pt_idx   = pt_i(vaddr);
 
-    // ---- PML4
     let pml4_entry = &root.0[pml4_idx];
     if !pml4_entry.is_present() {
         return Err("PML4 entry not present");
@@ -211,7 +285,6 @@ pub(super) fn walk_entry<'a>(
         return Err("PML4 huge - unsupported");
     }
 
-    // ---- PDPT
     let pdpt = tab_from_entry_const(pml4_entry);
     let pdpt_entry = &pdpt.0[pdpt_idx];
     if !pdpt_entry.is_present() {
@@ -224,7 +297,6 @@ pub(super) fn walk_entry<'a>(
         return Err("1 GiB huge");
     }
 
-    // ---- PD
     let pd = tab_from_entry_const(pdpt_entry);
     let pd_entry = &pd.0[pd_idx];
     if !pd_entry.is_present() {
@@ -237,7 +309,6 @@ pub(super) fn walk_entry<'a>(
         return Err("2 MiB huge");
     }
 
-    // ---- PT
     let pt = tab_from_entry_const(pd_entry);
     let pt_entry = &pt.0[pt_idx];
     if !pt_entry.is_present() {
@@ -246,12 +317,24 @@ pub(super) fn walk_entry<'a>(
     Ok(pt_entry)
 }
 
-// ============================================================================
-// Tab definition
-// ============================================================================
-
 #[repr(align(4096))]
 pub struct Tab(pub [Entry; 512]);
+
+impl Tab {
+    pub const fn new() -> Self {
+        Self (
+            [
+                const {
+                    Entry::new(
+                        Paddr::from_raw(0),
+                        EntryFlags::empty()
+                    )
+                };
+                512
+            ]
+        )
+    }
+}
 
 impl Index<usize> for Tab {
     type Output = Entry;
@@ -267,10 +350,6 @@ impl IndexMut<usize> for Tab {
     }
 }
 
-// ============================================================================
-// Area  – a single contiguous mapped region with uniform flags
-// ============================================================================
-
 #[derive(Clone, Copy)]
 pub struct Area {
     pub start: usize,
@@ -285,22 +364,14 @@ impl core::fmt::Display for Area
     }
 }
 
-// ============================================================================
-// Exco – the page‑table executor
-// ============================================================================
-
 pub struct Exco {
     pub cr3: u64,
     pub root: &'static mut Tab,
     pub owned: bool,
 }
 
-// --------------------------------------------------------------------
-// 1. Construction and destruction
-// --------------------------------------------------------------------
-
 impl Exco {
-    pub fn from_root(root: &'static mut Tab, cr3: u64, owned: bool) -> Self {
+    pub const fn from_root(root: &'static mut Tab, cr3: u64, owned: bool) -> Self {
         Exco { cr3, root, owned }
     }
 
@@ -318,22 +389,17 @@ impl Exco {
     }
 
     fn dup_table(table: &Tab) -> (&'static mut Tab, usize) {
-        trace!("Exco::dup_table start");
         let new = alloc_tab_zeroed();
         for (i, entry) in table.0.iter().enumerate() {
             if entry.is_present() && !is_huge(entry) {
                 let child = tab_from_entry(entry);
-                let (new_child, child_paddr) = Self::dup_table(child);
-                new.0[i] = Entry::new(
-                    Paddr::from_raw(child_paddr),
-                    entry.flags(),
-                );
+                let (_, child_paddr) = Self::dup_table(child);  // Игнорируем reference
+                new.0[i] = Entry::new(Paddr::from_raw(child_paddr), entry.flags());
             } else if entry.is_present() {
                 new.0[i] = *entry;
             }
         }
         let paddr = Vaddr::from_ref(&*new).to_phys().to_raw();
-        trace!("Exco::dup_table -> {:#X}", paddr);
         (new, paddr)
     }
 
@@ -350,16 +416,15 @@ impl Exco {
     }
 
     pub fn clean(&mut self) {
-        let cr3 = self.cr3;
-        debug!("Exco::clean started for CR3 {:#018X}", cr3);
         if self.owned {
             Self::free_table(self.root, true);
-        }
-        for e in self.root.0.iter_mut() {
-            *e = Entry::default();
+            self.root = alloc_tab_zeroed();
+        } else {
+            for e in self.root.0.iter_mut() {
+                *e = Entry::default();
+            }
         }
         self.cr3 = Vaddr::from_ref(&*self.root).to_phys().to_raw() as u64;
-        debug!("Exco::clean finished (new CR3 {:#018X})", self.cr3);
     }
 
     fn free_table(table: &mut Tab, free_self: bool) {
@@ -376,21 +441,22 @@ impl Exco {
     }
 }
 
-// --------------------------------------------------------------------
-// 2. Report
-// --------------------------------------------------------------------
-
 impl Exco {
     pub fn report<const N: usize>(&self) -> Vec<Area, N> {
         debug!("Exco::report<{}> start", N);
         let mut areas: Vec<Area, N> = Vec::new();
+        #[allow(unused_variables)] // cargo check false positive
         let mut total_pages: usize = 0;
         for pml4_idx in 0..512 {
             let pml4_entry = &self.root.0[pml4_idx];
             if !pml4_entry.is_present() {
                 continue;
             }
-            let base_pml4 = (pml4_idx as usize) << 39;
+            let base_pml4 = if pml4_idx >= 256 {
+                0xFFFF000000000000 | ((pml4_idx as usize) << 39)
+            } else {
+                (pml4_idx as usize) << 39
+            };
             if is_huge(pml4_entry) {
                 continue;
             }
@@ -450,10 +516,6 @@ fn try_push_area<const N: usize>(
     }
     let _ = areas.push(Area { start: vaddr, count, flags });
 }
-
-// --------------------------------------------------------------------
-// 3. Mapping
-// --------------------------------------------------------------------
 
 impl Exco {
     pub fn map4k(&mut self, vaddr: usize, paddr: Paddr, flags: EntryFlags) {
@@ -522,10 +584,6 @@ impl Exco {
     }
 }
 
-// --------------------------------------------------------------------
-// 4. Unmapping
-// --------------------------------------------------------------------
-
 impl Exco {
     pub fn unmap(&mut self, vaddr: usize) {
         self.try_unmap(vaddr).expect("unmap failed");
@@ -561,10 +619,6 @@ impl Exco {
         Err("address not mapped")
     }
 }
-
-// --------------------------------------------------------------------
-// 5. Splitting huge pages
-// --------------------------------------------------------------------
 
 impl Exco {
     pub fn split2m(&mut self, vaddr: usize) {
@@ -631,10 +685,6 @@ impl Exco {
         Ok(())
     }
 }
-
-// --------------------------------------------------------------------
-// 6. Merging into huge pages
-// --------------------------------------------------------------------
 
 impl Exco {
     pub fn merge2m(&mut self, vaddr: usize) {
@@ -746,10 +796,6 @@ fn try_coalesce_into_1g(
     Ok(())
 }
 
-// --------------------------------------------------------------------
-// 7. Fallible (`try_*`) variants
-// --------------------------------------------------------------------
-
 impl Exco {
     pub fn try_new() -> Result<Self, &'static str> {
         Ok(Self::new())
@@ -778,16 +824,8 @@ impl Exco {
         }
     }
 
-    /// Switch the CPU to this page‑table hierarchy by writing CR3.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the current instruction stream, stack, and
-    /// all data needed for the remainder of execution are mapped in the new
-    /// page tables.
     #[inline(always)]
     pub unsafe fn activate(&self) {
-        trace!("Exco::activate -> CR3 {:#018X}", self.cr3);
         unsafe {
             core::arch::asm!("mov cr3, {}", in(reg) self.cr3, options(nostack, preserves_flags));
         }

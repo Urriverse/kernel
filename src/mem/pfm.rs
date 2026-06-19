@@ -1,193 +1,382 @@
-//! Page Frame Manager (PFM) – a sparsemem / vmemmap‑style metadata array.
+use core::{
+    ptr,
+    sync::atomic::{AtomicU8, AtomicU32, Ordering},
+};
 
-use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
-use heapless::Vec;
-use crate::mem::kdm::Paddr;
-use crate::mem::ptm::{EntryFlags, Polen};
-use crate::mem::upa;
 use crate::mem::pmr::{self, Kind};
 
-pub const PAGE_SIZE: usize = 4096;
-pub const VMEMMAP_BASE: usize = 0xffff_D000_0000_0000;
-pub const PF_RESERVED: u16 = 1 << 0;
-pub const PF_SLAB: u16 = 1 << 1;
-
-/// Sentinel value for `slab_cache` indicating the page is not a slab page.
-pub const SLAB_NO_CACHE: u32 = 0xFFFF_FFFF;
-
-#[repr(C, align(8))]
-pub struct PageFrame {
-    // Buddy allocator fields
-    refcount: AtomicU32,
-    flags: AtomicU16,
-    order: AtomicU8,
-    _pad: u8,
-    next_free: AtomicU32,
-    // SOA slab metadata
-    slab_cache: AtomicU32,   // cache index (SLAB_NO_CACHE = not a slab page)
-    slab_inuse: AtomicU16,   // number of allocated objects in this slab
-    slab_total: AtomicU16,   // total number of objects in this slab
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct PageFlags: u32 {
+        const RESERVED   = 1 << 0;
+        const FREE       = 1 << 1;
+        const ALLOCATED  = 1 << 2;
+        const BUDDY_HEAD = 1 << 3;
+    }
 }
 
-const INVALID_PFN: u32 = 0xffff_ffff;
+#[derive(Debug)]
+#[repr(C)]
+pub struct Page {
+    pub flags: AtomicU32,
+    pub order: AtomicU8,
+    pub _pad: [u8; 3],
+    pub count: AtomicU32,
+    pub private: AtomicU32,
+}
 
-impl PageFrame {
-    pub const fn zero() -> Self {
+impl Default for Page {
+    fn default() -> Self {
         Self {
-            refcount: AtomicU32::new(0),
-            flags: AtomicU16::new(0),
+            flags: AtomicU32::new(PageFlags::empty().bits()),
             order: AtomicU8::new(0),
-            _pad: 0,
-            next_free: AtomicU32::new(INVALID_PFN),
-            slab_cache: AtomicU32::new(SLAB_NO_CACHE),
-            slab_inuse: AtomicU16::new(0),
-            slab_total: AtomicU16::new(0),
+            _pad: [0; 3],
+            count: AtomicU32::new(0),
+            private: AtomicU32::new(0),
         }
     }
-
-    pub fn inc_ref(&self) { self.refcount.fetch_add(1, Ordering::Relaxed); }
-    pub fn dec_ref(&self) -> u32 { self.refcount.fetch_sub(1, Ordering::Release) }
-    pub fn refcount(&self) -> u32 { self.refcount.load(Ordering::Acquire) }
-    pub fn set_refcount(&self, val: u32) { self.refcount.store(val, Ordering::Release); }
-
-    pub fn set_flags(&self, flags: u16) { self.flags.store(flags, Ordering::Release); }
-    pub fn flags(&self) -> u16 { self.flags.load(Ordering::Acquire) }
-
-    pub fn set_order(&self, order: u8) { self.order.store(order, Ordering::Release); }
-    pub fn order(&self) -> u8 { self.order.load(Ordering::Acquire) }
-
-    pub fn set_next_free(&self, pfn: u32) { self.next_free.store(pfn, Ordering::Release); }
-    pub fn next_free(&self) -> Option<usize> {
-        let v = self.next_free.load(Ordering::Acquire);
-        if v == INVALID_PFN { None } else { Some(v as _) }
-    }
-
-    // ── SOA slab accessors ────────────────────────────────────────────────
-
-    pub fn set_slab_cache(&self, idx: u32) { self.slab_cache.store(idx, Ordering::Release); }
-    pub fn slab_cache(&self) -> u32 { self.slab_cache.load(Ordering::Acquire) }
-
-    pub fn set_slab_inuse(&self, val: u16) { self.slab_inuse.store(val, Ordering::Release); }
-    pub fn slab_inuse(&self) -> u16 { self.slab_inuse.load(Ordering::Acquire) }
-    pub fn inc_slab_inuse(&self) -> u16 { self.slab_inuse.fetch_add(1, Ordering::AcqRel) }
-    pub fn dec_slab_inuse(&self) -> u16 { self.slab_inuse.fetch_sub(1, Ordering::AcqRel) }
-
-    pub fn set_slab_total(&self, val: u16) { self.slab_total.store(val, Ordering::Release); }
-    pub fn slab_total(&self) -> u16 { self.slab_total.load(Ordering::Acquire) }
 }
 
-pub fn pfn_to_page(pfn: usize) -> &'static PageFrame {
-    let offset = pfn * core::mem::size_of::<PageFrame>();
-    unsafe { &*( (VMEMMAP_BASE + offset) as *const PageFrame ) }
-}
+const SECTION_SHIFT: u32 = 24;
+const SECTION_SIZE: usize = 1 << SECTION_SHIFT;
 
-pub fn page_to_pfn(page: &PageFrame) -> usize {
-    ( (page as *const _ as usize) - VMEMMAP_BASE ) / core::mem::size_of::<PageFrame>()
-}
+const PAGES_PER_SECTION: usize = SECTION_SIZE / 4096;
 
-pub fn reserve(pfn: usize) {
-    // trace!("PFM: reserving PFN {}", pfn);
-    let page = pfn_to_page(pfn);
-    let flags = page.flags();
-    page.set_flags(flags | PF_RESERVED);
-    page.set_refcount(1);
-}
+static mut SECTIONS: *mut *mut Page = ptr::null_mut();
 
-pub fn unreserve(pfn: usize) {
-    // trace!("PFM: unreserving PFN {}", pfn);
-    let page = pfn_to_page(pfn);
-    let flags = page.flags();
-    page.set_flags(flags & !PF_RESERVED);
-    page.set_refcount(0);
-}
+static mut MAX_SECTIONS: usize = 0;
 
-pub fn is_reserved(pfn: usize) -> bool {
-    pfn_to_page(pfn).flags() & PF_RESERVED != 0
-}
+pub fn init() {
+    debug!("PFM: Initializing SPARSEMEM page frame metadata");
 
-static mut ALLOCATED_METADATA_PFNS: Vec<usize, 65536> = Vec::new(); // enough for max PFN/256
+    let size_of_page = core::mem::size_of::<Page>();
+    let bytes_per_section = PAGES_PER_SECTION * size_of_page;
+    let pages_needed_per_section = (bytes_per_section + 4095) / 4096;
 
-/// Initialise the PFM: allocate and map metadata pages for all usable memory.
-#[allow(static_mut_refs)]
-pub fn init(polen: &mut Polen) {
-    info!("PFM: initialising vmemmap at {:#X}", VMEMMAP_BASE);
-
-    // 1. Determine maximum PFN from usable regions
-    let mut max_phys = 0;
+    let mut max_pfn = 0;
     for region in pmr::iter() {
-        if region.kind == Kind::USABLE {
-            let end = region.base + region.len;
-            if end > max_phys { max_phys = end; }
-            trace!("PFM: usable region base={:#X}, len={:#X}, end={:#X}", region.base, region.len, end);
+        let end_pfn = (region.base + region.len + 4095) / 4096;
+        if end_pfn > max_pfn {
+            max_pfn = end_pfn;
         }
     }
-    let max_pfn = (max_phys + PAGE_SIZE - 1) >> 12;
-    info!("PFM: max PFN = {}", max_pfn);
 
-    // 2. Process each usable region, allocate and map metadata pages
-    for region in pmr::iter() {
-        if region.kind != Kind::USABLE {
-            trace!("PFM: skipping non‑usable region kind {:?}", region.kind);
-            continue;
+    if max_pfn == 0 {
+        warn!("PFM: No memory regions found");
+        return;
+    }
+
+    let max_sec = (max_pfn + PAGES_PER_SECTION - 1) / PAGES_PER_SECTION;
+    debug!("PFM: Max PFN = {}, Max sections = {}", max_pfn, max_sec);
+
+    let sec_array_bytes = max_sec * core::mem::size_of::<*mut Page>();
+    let sec_array_pages = (sec_array_bytes + 4095) / 4096;
+    debug!("PFM: Allocating {} pages for sections array", sec_array_pages);
+
+    let sec_array_paddr = crate::mem::ema::alloc(sec_array_pages);
+    if sec_array_paddr.to_raw() == 0 {
+        panic!("PFM: Failed to allocate sections array");
+    }
+
+    let sec_array_ptr: *mut *mut Page = sec_array_paddr.to_virt().to_ptr_mut();
+    debug!("PFM: Sections array at {:#X}", sec_array_ptr as usize);
+
+    for i in 0..max_sec {
+        unsafe {
+            ptr::write(sec_array_ptr.add(i), ptr::null_mut());
         }
-        let start_pfn = (region.base >> 12) as u32;
-        let end_pfn = ((region.base + region.len + PAGE_SIZE - 1) >> 12) as u32;
-        let start_offset = (start_pfn as usize) * core::mem::size_of::<PageFrame>();
-        let end_offset   = (end_pfn   as usize) * core::mem::size_of::<PageFrame>();
-        let start_vaddr = VMEMMAP_BASE + start_offset;
-        let len = end_offset - start_offset;
+    }
 
-        let map_start = start_vaddr & !(PAGE_SIZE - 1);
-        let map_end   = (start_vaddr + len + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let total_bytes = map_end - map_start;
+    unsafe {
+        SECTIONS = sec_array_ptr;
+        MAX_SECTIONS = max_sec;
+    }
 
-        info!("PFM: processing region PFN {}..{} -> VA {:#X}..{:#X} ({} bytes)",
-              start_pfn, end_pfn, map_start, map_end, total_bytes);
+    let mut allocated_sections = 0;
 
-        let mut curr_vaddr = map_start;
-        let mut remaining = total_bytes;
-        while remaining > 0 {
-            // debug!("PFM: allocating metadata page for VA {:#X}, remaining bytes {}", curr_vaddr, remaining);
-            let phys = upa::alloc(1);
-            if phys.to_raw() == 0 {
-                panic!("PFM: out of memory while allocating metadata page at VA {:#X}", curr_vaddr);
-            }
-            let pfn = phys.to_raw() / PAGE_SIZE;
-            // info!("PFM: allocated phys page {:#X} (PFN {}) for VA {:#X}", phys.to_raw(), pfn, curr_vaddr);
+    for region in pmr::iter() {
+        let start_pfn = region.base / 4096;
+        let end_pfn = (region.base + region.len + 4095) / 4096;
 
-            // Map the page into the vmemmap area
-            // debug!("PFM: mapping VA {:#X} -> PA {:#X}", curr_vaddr, phys.to_raw());
-            if let Err(e) = polen.exco.try_map4k(curr_vaddr, phys, EntryFlags::PRESENT | EntryFlags::WRITABLE) {
-                error!("PFM: mapping failed at VA {:#X}: {}", curr_vaddr, e);
-                panic!("PFM: try_map4k failed");
-            }
-            // trace!("PFM: mapped successfully");
+        let start_sec = start_pfn / PAGES_PER_SECTION;
+        let end_sec = (end_pfn + PAGES_PER_SECTION - 1) / PAGES_PER_SECTION;
 
-            // Zero the page
+        for sec in start_sec..end_sec {
             unsafe {
-                let slice = core::slice::from_raw_parts_mut(curr_vaddr as *mut u8, PAGE_SIZE);
-                slice.fill(0);
-                // trace!("PFM: zeroed page at VA {:#X}", curr_vaddr);
-            }
+                let current_ptr = *SECTIONS.add(sec);
+                if current_ptr.is_null() {
+                    let paddr = crate::mem::ema::alloc(pages_needed_per_section);
+                    if paddr.to_raw() == 0 {
+                        panic!("PFM: Failed to allocate section {}", sec);
+                    }
 
-            // Store PFN for later reservation (cannot reserve now because the vmemmap for this PFN may not be mapped yet)
-            unsafe {
-                if ALLOCATED_METADATA_PFNS.push(pfn).is_err() {
-                    panic!("PFM: too many metadata pages");
+                    let ptr: *mut Page = paddr.to_virt().to_ptr_mut();
+                    *SECTIONS.add(sec) = ptr;
+
+                    for i in 0..PAGES_PER_SECTION {
+                        ptr::write(ptr.add(i), Page::default());
+                    }
+
+                    allocated_sections += 1;
                 }
             }
-
-            curr_vaddr += PAGE_SIZE;
-            remaining -= PAGE_SIZE;
         }
     }
 
-    // 3. Now that all vmemmap pages are mapped, reserve the physical pages used for metadata
-    info!("PFM: reserving {} metadata physical pages", unsafe { ALLOCATED_METADATA_PFNS.len() });
-    for i in 0..unsafe { ALLOCATED_METADATA_PFNS.len() } {
-        let pfn = unsafe { ALLOCATED_METADATA_PFNS[i] };
-        reserve(pfn);
+    for region in pmr::iter() {
+        let start_pfn = region.base / 4096;
+        let end_pfn = (region.base + region.len + 4095) / 4096;
+
+        for pfn in start_pfn..end_pfn {
+            if let Some(page) = get_page(pfn) {
+                match region.kind {
+                    Kind::USABLE => {
+                        page.flags.store(PageFlags::FREE.bits(), Ordering::Release);
+                    }
+                    _ => {
+                        page.flags.store(PageFlags::RESERVED.bits(), Ordering::Release);
+                    }
+                }
+            }
+        }
     }
 
-    info!("PFM: initialisation complete");
+    info!(
+        "PFM: Initialized. Max PFN: {}, Sections allocated: {}, Max Sections: {}",
+        max_pfn, allocated_sections, max_sec
+    );
+}
+
+#[inline(always)]
+pub fn get_page(pfn: usize) -> Option<&'static Page> {
+    let ptr = get_page_ptr(pfn)?;
+    Some(unsafe { &*ptr })
+}
+
+#[inline(always)]
+pub fn get_page_ptr(pfn: usize) -> Option<*mut Page> {
+    let paddr = pfn * 4096;
+    if !crate::mem::kdm::is_mapped(paddr) {
+        return None;
+    }
+    unsafe {
+        let sec = pfn / PAGES_PER_SECTION;
+        if sec >= MAX_SECTIONS {
+            return None;
+        }
+        let ptr = *SECTIONS.add(sec);
+        if ptr.is_null() {
+            return None;
+        }
+        let idx = pfn % PAGES_PER_SECTION;
+        Some(ptr.add(idx))
+    }
+}
+
+#[inline(always)]
+pub fn paddr_to_pfn(paddr: crate::mem::kdm::Paddr) -> usize {
+    paddr.to_raw() / 4096
+}
+
+#[inline(always)]
+pub fn get_page_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<&'static Page> {
+    get_page(paddr_to_pfn(paddr))
+}
+
+#[inline(always)]
+pub fn get_page_ptr_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<*mut Page> {
+    get_page_ptr(paddr_to_pfn(paddr))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageFrame(usize);
+
+impl PageFrame {
+    #[inline(always)]
+    pub const fn new(pfn: usize) -> Self {
+        Self(pfn)
+    }
+
+    #[inline(always)]
+    pub const fn from_paddr(paddr: crate::mem::kdm::Paddr) -> Self {
+        Self(paddr.to_raw() / 4096)
+    }
+
+    #[inline(always)]
+    pub fn from_vaddr(vaddr: crate::mem::kdm::Vaddr) -> Self {
+        Self::from_paddr(vaddr.to_phys())
+    }
+
+    #[inline(always)]
+    pub const fn pfn(self) -> usize {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn paddr(self) -> crate::mem::kdm::Paddr {
+        crate::mem::kdm::Paddr::from_raw(self.0 * 4096)
+    }
+
+    #[inline(always)]
+    pub fn vaddr(self) -> crate::mem::kdm::Vaddr {
+        self.paddr().to_virt()
+    }
+
+    #[inline(always)]
+    pub fn page(self) -> Option<&'static Page> {
+        get_page(self.0)
+    }
+
+    #[inline(always)]
+    pub fn page_ptr(self) -> Option<*mut Page> {
+        get_page_ptr(self.0)
+    }
+
+    #[inline(always)]
+    pub fn is_valid(self) -> bool {
+        get_page_ptr(self.0).is_some()
+    }
+
+    #[inline(always)]
+    pub fn flags(self) -> PageFlags {
+        if let Some(page) = self.page() {
+            PageFlags::from_bits_truncate(page.flags.load(Ordering::Acquire))
+        } else {
+            PageFlags::empty()
+        }
+    }
+
+    #[inline(always)]
+    pub fn set_flags(self, flags: PageFlags) -> Self {
+        if let Some(page) = self.page() {
+            page.flags.store(flags.bits(), Ordering::Release);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn flags_or(self, flags: PageFlags) -> Self {
+        if let Some(page) = self.page() {
+            page.flags.fetch_or(flags.bits(), Ordering::AcqRel);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn flags_and(self, flags: PageFlags) -> Self {
+        if let Some(page) = self.page() {
+            page.flags.fetch_and(flags.bits(), Ordering::AcqRel);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn clear_flags(self, flags: PageFlags) -> Self {
+        if let Some(page) = self.page() {
+            page.flags.fetch_and(!flags.bits(), Ordering::AcqRel);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn is_free(self) -> bool {
+        self.flags().contains(PageFlags::FREE)
+    }
+
+    #[inline(always)]
+    pub fn is_allocated(self) -> bool {
+        self.flags().contains(PageFlags::ALLOCATED)
+    }
+
+    #[inline(always)]
+    pub fn is_reserved(self) -> bool {
+        self.flags().contains(PageFlags::RESERVED)
+    }
+
+    #[inline(always)]
+    pub fn count(self) -> u32 {
+        if let Some(page) = self.page() {
+            page.count.load(Ordering::Acquire)
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    pub fn inc_count(self) -> u32 {
+        if let Some(page) = self.page() {
+            page.count.fetch_add(1, Ordering::AcqRel) + 1
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    pub fn dec_count(self) -> u32 {
+        if let Some(page) = self.page() {
+            page.count.fetch_sub(1, Ordering::AcqRel) - 1
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    pub fn try_alloc(self) -> bool {
+        if let Some(page) = self.page() {
+            let expected = PageFlags::FREE.bits();
+            let desired = PageFlags::ALLOCATED.bits();
+            page.flags
+                .compare_exchange(expected, desired, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        } else {
+            false
+        }
+    }
+
+    #[inline(always)]
+    pub fn try_free(self) -> bool {
+        if let Some(page) = self.page() {
+            let expected = PageFlags::ALLOCATED.bits();
+            let desired = PageFlags::FREE.bits();
+            page.flags
+                .compare_exchange(expected, desired, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        } else {
+            false
+        }
+    }
+
+    #[inline(always)]
+    pub fn order(self) -> u8 {
+        if let Some(page) = self.page() {
+            page.order.load(Ordering::Relaxed)
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn set_order(self, order: u8) -> Self {
+        if let Some(page_ptr) = self.page_ptr() {
+            (unsafe { &*page_ptr }).order.store(order, Ordering::Relaxed);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn private(self) -> u32 {
+        if let Some(page) = self.page() {
+            page.private.load(Ordering::Relaxed)
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn set_private(self, private: u32) -> Self {
+        if let Some(page_ptr) = self.page_ptr() {
+            (unsafe { &*page_ptr }).private.store(private, Ordering::Relaxed);
+        }
+        self
+    }
 }

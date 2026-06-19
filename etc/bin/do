@@ -360,7 +360,7 @@ def run_qemu(profile_name: str):
         *( [ "--enable-kvm" ] if kvm else []),
         "-cpu", "host",
         "-m", "2G",
-        "-smp", "2",
+        "-smp", "4",
         "-serial", "stdio",
         "-vga", "std",
         "-machine", "q35,accel=kvm:tcg",
