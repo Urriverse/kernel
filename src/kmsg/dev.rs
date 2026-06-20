@@ -1,4 +1,4 @@
-use crate::kmsg::{Sink, SinkAttrs, SinkIdent};
+use crate::{kmsg::{Sink, SinkAttrs, SinkIdent}, sync::Nutex};
 
 // cargo check: false positive
 #[allow(unused)]
@@ -31,6 +31,8 @@ unsafe impl Sync for Dev {}
 #[allow(unused)]
 static ID: u32 = super::str4_to_u32("DEV0");
 
+pub static LOCK: Nutex<()> = Nutex::new(());
+
 impl Sink for Dev
 {
     fn kind(&self) -> SinkIdent
@@ -44,6 +46,8 @@ impl Sink for Dev
 
     fn write(&self, s: &str)
     {
+        let _g = LOCK.lock();
+
         for byte in s.bytes()
         {
             unsafe 
@@ -63,6 +67,8 @@ impl Sink for Dev
             }
             x86::io::outb(0x3f8, b'\n');
         }
+
+        drop(_g);
     }
 }
 

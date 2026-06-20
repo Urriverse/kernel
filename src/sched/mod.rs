@@ -5,7 +5,10 @@ pub mod proc;
 
 use crate::arch::trap::TrapFrame;
 use crate::mem::vma::VmaFlags;
-use crate::sync::{Nitex, Nutex};
+use crate::sched::proc::Process;
+use crate::sync::Nutex;
+use crate::vfs::RootRef;
+use alloc::sync::Arc;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use task::{Task, TaskId, TaskState, Priority};
 use rq::RUNQUEUES;
@@ -15,7 +18,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::arch::paging::EntryFlags;
 
 pub static TASK_REGISTRY: Nutex<BTreeMap<TaskId, Box<Task>>> = Nutex::new(BTreeMap::new());
-pub static EXIT_WQ: Nitex<WaitQueue> = Nitex::new(WaitQueue::new());
+pub static EXIT_WQ: Nutex<WaitQueue> = Nutex::new(WaitQueue::new());
 
 static TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -28,8 +31,6 @@ pub fn init(ticks_per_10ms: u64) {
         rq.set_current(idle.id);
         rq.insert(idle);
 
-        // Если это BSP (cpu == 0), per‑CPU стек уже может быть установлен,
-        // но для надёжности обновляем его сразу.
         if cpu == crate::arch::current_cpu() {
             crate::arch::percpu::set_kernel_stack(stack as u64);
         }
@@ -52,11 +53,21 @@ fn idle_task() {
     }
 }
 
-pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str) -> TaskId {
-    let stack = allocate_kernel_stack(16 * 1024);
+pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str, root: Option<RootRef>) -> TaskId {
+    let stack = allocate_kernel_stack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
+
+    if let Some(x) = root {
+        let mut proc;
+        if let Some(p) = current_process() {
+            proc = (*p).clone()
+        } else {
+            proc = Process::default();
+        }
+        proc.roots = x;
+        task.process = Arc::new(proc);
+    }
     
-    // Назначаем родителя (текущую задачу)
     let cpu = crate::arch::current_cpu();
     let rq = RUNQUEUES[cpu].lock();
     task.parent = rq.current_task_id();
@@ -67,17 +78,23 @@ pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str) ->
     id
 }
 
-pub fn exit(code: i32) {
+pub fn exit(code: i32) -> ! {
+
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap();
+
+    debug!(
+        "Exiting task {} (PID {}) with code {}",
+        current_id.0,
+        current_process().unwrap_or(Arc::new(Process::default())).pid,
+        code,
+    );
     
-    // 1. Забираем задачу из очереди выполнения
     let mut task = rq.remove(current_id).unwrap();
     rq.clear_current();
     drop(rq);
     
-    // 2. Усыновляем сирот (передаем их задаче init с ID=1)
     let init_id = TaskId(1);
     {
         let mut registry = TASK_REGISTRY.lock();
@@ -88,18 +105,16 @@ pub fn exit(code: i32) {
         }
     }
 
-    // 3. Превращаем в зомби
     task.state = TaskState::Zombie;
     task.exit_code = code;
     
-    // 4. Помещаем в глобальный реестр
     TASK_REGISTRY.lock().insert(current_id, task);
     
-    // 5. Будим родителя (или init), если он ждет в wait()
     wakeup(&EXIT_WQ);
     
-    // 6. Передаем управление планировщику
     yield_now();
+
+    unreachable!();
 }
 
 pub fn yield_now() {
@@ -108,7 +123,7 @@ pub fn yield_now() {
     }
 }
 
-pub fn sleep(wq: &Nitex<WaitQueue>) {
+pub fn sleep(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap();
@@ -121,7 +136,7 @@ pub fn sleep(wq: &Nitex<WaitQueue>) {
     yield_now();
 }
 
-pub fn wakeup(wq: &Nitex<WaitQueue>) {
+pub fn wakeup(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     
@@ -139,12 +154,11 @@ pub fn wait_child(child_id: TaskId) -> i32 {
         if let Some(task) = registry.get(&child_id) {
             if task.state == TaskState::Zombie {
                 let code = task.exit_code;
-                registry.remove(&child_id); // Память освобождается здесь!
+                registry.remove(&child_id);
                 return code;
             }
         }
         drop(registry);
-        // Если ребенок еще жив, спим до следующего exit()
         sleep(&EXIT_WQ);
     }
 }
@@ -243,16 +257,13 @@ pub fn reschedule(frame: &mut TrapFrame) {
 #[unsafe(naked)]
 pub unsafe extern "C" fn yield_wrapper() -> ! {
     naked_asm!(
-        // Проверяем, пришло ли прерывание из пользовательского режима
-        // (младшие 2 бита CS равны 3)
-        "mov rax, [rsp + 8]",       // читаем CS из стека (старый CS)
+        "mov rax, [rsp + 8]",
         "and rax, 3",
         "cmp rax, 3",
         "jne 1f",
-        "swapgs",                   // переключаем на ядерный GS
+        "swapgs",
         "1:",
 
-        // Сохраняем GPR (как раньше)
         "push r15", "push r14", "push r13", "push r12",
         "push r11", "push r10", "push r9", "push r8",
         "push rbp", "push rdi", "push rsi", "push rdx",
@@ -261,18 +272,16 @@ pub unsafe extern "C" fn yield_wrapper() -> ! {
         "mov rdi, rsp",
         "call {scheduler_tick}",
 
-        // Восстанавливаем GPR
         "pop rax", "pop rbx", "pop rcx", "pop rdx",
         "pop rsi", "pop rdi", "pop rbp", "pop r8",
         "pop r9", "pop r10", "pop r11", "pop r12",
         "pop r13", "pop r14", "pop r15",
 
-        // Перед iretq проверяем, надо ли вернуть пользовательский GS
-        "mov rax, [rsp + 8]",       // снова CS (уже может быть изменён планировщиком!)
+        "mov rax, [rsp + 8]",
         "and rax, 3",
         "cmp rax, 3",
         "jne 2f",
-        "swapgs",                   // обратно на пользовательский GS
+        "swapgs",
         "2:",
 
         "iretq",
@@ -293,7 +302,7 @@ pub fn current_process() -> Option<alloc::sync::Arc<proc::Process>> {
 }
 
 pub fn native_syscall_handler(frame: &mut TrapFrame) {
-    // В нативном ABI: RAX = номер syscall, RDI, RSI, RDX = аргументы
+    // native ABI: RAX = syscall num, RDI, RSI, RDX = args
     match frame.rax {
         0 => {
             // sys_yield
@@ -314,7 +323,6 @@ pub fn native_syscall_handler(frame: &mut TrapFrame) {
 }
 
 pub fn syscall_dispatcher(frame: &mut TrapFrame) {
-    // 1. Получаем текущий процесс
     let proc = match current_process() {
         Some(p) => p,
         None => {
@@ -324,17 +332,14 @@ pub fn syscall_dispatcher(frame: &mut TrapFrame) {
         }
     };
 
-    // 2. Вызываем уникальный ABI-обработчик, привязанный к этому процессу!
-    // Ядро вообще не знает, что такое Linux ABI или Windows ABI. 
-    // Оно просто передает сырые регистры в делегат.
     (proc.syscall_handler)(frame);
 }
 
-// Intentional no-panic on kernel segfaults; if from module, just kill it.
 pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool) {
     let is_present = (error_code & 0x1) != 0;
     let is_write   = (error_code & 0x2) != 0;
 
+    // Intentional no-panic on kernel segfaults; if from module, just kill it.
     // if !is_user {
     //     panic!("KERNEL PAGE FAULT at {:#X} (code: {:#X}) RIP: {:#X}", addr, error_code, rip);
     // }
@@ -380,7 +385,6 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
                 drop(vmm);
                 crate::info!("Process {} SEGFAULT: Write to Read-Only VMA at {:#X}", proc.pid, addr);
                 crate::sched::exit(139);
-                return;
             }
             drop(vmm); // free the lock before allocation
 

@@ -9,16 +9,13 @@ static TICKS_PER_10MS: AtomicU64 = AtomicU64::new(0);
 #[unsafe(naked)]
 pub unsafe extern "C" fn timer_wrapper() -> ! {
     naked_asm!(
-        // Проверяем, пришло ли прерывание из пользовательского режима
-        // (младшие 2 бита CS равны 3)
-        "mov rax, [rsp + 8]",       // читаем CS из стека (старый CS)
+        "mov rax, [rsp + 8]",
         "and rax, 3",
         "cmp rax, 3",
         "jne 1f",
-        "swapgs",                   // переключаем на ядерный GS
+        "swapgs",
         "1:",
 
-        // Сохраняем GPR (как раньше)
         "push r15", "push r14", "push r13", "push r12",
         "push r11", "push r10", "push r9", "push r8",
         "push rbp", "push rdi", "push rsi", "push rdx",
@@ -27,18 +24,16 @@ pub unsafe extern "C" fn timer_wrapper() -> ! {
         "mov rdi, rsp",
         "call {scheduler_tick}",
 
-        // Восстанавливаем GPR
         "pop rax", "pop rbx", "pop rcx", "pop rdx",
         "pop rsi", "pop rdi", "pop rbp", "pop r8",
         "pop r9", "pop r10", "pop r11", "pop r12",
         "pop r13", "pop r14", "pop r15",
 
-        // Перед iretq проверяем, надо ли вернуть пользовательский GS
-        "mov rax, [rsp + 8]",       // снова CS (уже может быть изменён планировщиком!)
+        "mov rax, [rsp + 8]",
         "and rax, 3",
         "cmp rax, 3",
         "jne 2f",
-        "swapgs",                   // обратно на пользовательский GS
+        "swapgs",
         "2:",
 
         "iretq",
@@ -131,7 +126,7 @@ pub fn init() {
 
     let start_hpet = *inst.counter();
 
-    // FIXME: sometimes this code shoots
+    // FIXME: sometimes this code shoots (quitely rarely)
     while (*inst.counter() - start_hpet) < hpet_ticks_to_wait {
         core::hint::spin_loop();
     }

@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 use crate::arch::trap::TrapFrame;
 use crate::mem::ptm::Polen;
 use crate::mem::vma::Vmm;
-use crate::sync::Nutex;
+use crate::sync::{Litex, Nutex};
+use crate::vfs::{RootRef, RootReg};
 
 pub type ProcId = u32;
 
@@ -14,6 +15,47 @@ pub struct Process {
     pub vmm: Arc<Nutex<Vmm>>,
     pub threads: Vec<super::task::TaskId>,
     pub syscall_handler: fn(&mut TrapFrame),
+    pub roots: RootRef,
+    pub level: u16,
+}
+
+static NEXT: Litex<u32> = Litex::new(0);
+
+fn next() -> u32 {
+    let next = NEXT.lock();
+    let rv = *next;
+    unsafe { *NEXT.inner() = rv + 1 }
+    rv
+}
+
+impl Clone for Process {
+    fn clone(&self) -> Self {
+        Self {
+            pid: next(),
+            parent: Some(self.pid),
+            address_space: self.address_space.clone(),
+            vmm: self.vmm.clone(),
+            threads: vec![],
+            syscall_handler: self.syscall_handler,
+            roots: self.roots.clone(),
+            level: self.level,
+        }
+    }
+}
+
+impl Default for Process {
+    fn default() -> Self {
+        Self {
+            pid: next(),
+            parent: None,
+            address_space: Arc::new(Nutex::new(Polen::reference())),
+            vmm: Arc::new(Nutex::new(Vmm::new())),
+            threads: Vec::new(),
+            syscall_handler: crate::sched::native_syscall_handler,
+            roots: RootRef::new(RootReg::new()),
+            level: 0,
+        }
+    }
 }
 
 impl core::fmt::Debug for Process {

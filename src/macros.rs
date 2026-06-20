@@ -90,14 +90,20 @@ macro_rules! entry
         {
             $($a)*
             __LAST.wait();
-            loop { core::hint::spin_loop(); }
+            crate::sched::yield_now();
+            loop {
+                unsafe { core::arch::asm!("hlt"); }
+            }
         }
         pub fn main() -> !
         {
             info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
             $($b)*
             __LAST.open();
-            loop { core::hint::spin_loop(); }
+            crate::sched::yield_now();
+            loop {
+                unsafe { core::arch::asm!("hlt"); }
+            }
         }
     }
 }

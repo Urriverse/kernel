@@ -251,7 +251,7 @@ pub fn walk_entry_mut<'a>(
             Vaddr::from_ref(new_tab).to_phys(),
             EntryFlags::PRESENT | EntryFlags::WRITABLE,
         );
-        debug!("Created PD[{}] for vaddr {:#X}", pd_idx, vaddr);
+        // debug!("Created PD[{}] for vaddr {:#X}", pd_idx, vaddr);
     }
     if is_huge(pd_entry) {
         return Err("2 MiB huge page encountered - split first");
@@ -411,7 +411,6 @@ impl Exco {
         let phys = (cr3_raw & 0x000f_ffff_ffff_f000) as usize;
         let vaddr = Paddr::from_raw(phys).to_virt();
         let root: &'static mut Tab = vaddr.to_ref_mut();
-        info!("Exco::current CR3 {:#018X} (phys {:#X})", cr3_raw, phys);
         Exco { cr3: cr3_raw, root, owned: false }
     }
 

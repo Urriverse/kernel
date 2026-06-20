@@ -1,4 +1,6 @@
 use alloc::collections::VecDeque;
+use crate::kmsg;
+
 use super::task::TaskId;
 
 pub struct WaitQueue {
@@ -14,6 +16,7 @@ impl WaitQueue {
 
     pub fn sleep(&mut self, task_id: TaskId) {
         self.waiters.push_back(task_id);
+        let _ = kmsg::SINKS.lock();  // lock for several instructions (fixes cases when scheduler escapes kmsg synchronization)
     }
 
     pub fn wakeup_one(&mut self) -> Option<TaskId> {

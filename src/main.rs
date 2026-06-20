@@ -5,9 +5,14 @@
 #![feature(abi_x86_interrupt)]
 #![feature(const_trait_impl)]
 #![feature(likely_unlikely)]
+#![feature(const_destruct)]
 #![feature(const_cmp)]
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
+
+use alloc::string::ToString;
+
+use crate::sched::current_process;
 
 #[allow(unused)] #[macro_use] pub extern crate extrum;
 #[allow(unused)] #[macro_use] pub extern crate bitflags;
@@ -15,7 +20,6 @@
 #[allow(unused)] #[macro_use] pub extern crate alloc;
 
 #[macro_use] mod macros;
-#[macro_use] pub mod driverkit;
 pub mod rt;
 pub mod sync;
 pub mod kmsg;
@@ -51,16 +55,19 @@ entry! {
 
         arch::late_init();
 
-        let ticks_per_10ms = crate::arch::timer::get_ticks_per_10ms();
-        crate::sched::init(ticks_per_10ms);
-
         LATE_INIT.open();
 
         dev::init();
 
         DEV_INIT.open();
 
-        crate::sched::spawn_kernel_task(init_task, crate::sched::task::Priority(0), "init");
+        let ticks_per_10ms = crate::arch::timer::get_ticks_per_10ms();
+        crate::sched::init(ticks_per_10ms);
+
+        crate::sched::spawn_kernel_task(reaper, crate::sched::task::Priority(-1), "reaper", Some(vfs::RootRef::new(vfs::RootReg::new())));
+        crate::sched::spawn_kernel_task(test, crate::sched::task::Priority(0), "test", Some(vfs::RootRef::new(vfs::RootReg::new())));
+
+        // sched::exit(0);
     }
 
     for AP {
@@ -79,16 +86,34 @@ entry! {
         arch::late_init();
 
         DEV_INIT.wait();
+
+        // sched::exit(0);
     }
 }
 
-fn init_task() {
-    crate::info!("init_task started. I am PID 1.");
-    
+fn test() {
+    let roots = current_process().expect("NOPID").roots.clone();
+    debug!("Got roots");
+    let inode = vfs::Inode::new();
+    inode.vtable = &vfs::PVFS_VTABLE;
+    debug!("Inode created");
+    if let Err(e) = roots.add_new_root("pv".to_string(), inode.id) { panic!("{:?}", e); }
+    debug!("Root created");
+    if let Err(e) = (inode.vtable.new)(inode, vfs::Kind::File) { panic!("{:?}", e); }
+    debug!("File created");
+    if let Err(e) = (inode.vtable.write)(inode, 0, &[b'[', b'N', b'O', b'T', b' ', b'F', b'A', b'I', b'L', b'E', b'D', b']']) { panic!("{:?}", e); }
+    debug!("File written");
+    let mut buf: &mut [u8] = &mut [b'[', b'F', b'A', b'I', b'L', b'E', b'D', b']', b' ', b' ', b' ', b' '];
+    if let Err(e) = (inode.vtable.read)(inode, 0, &mut buf) { panic!("{:?}", e); }
+    debug!("vfs test: {}", str::from_utf8(buf).unwrap());
+    sched::exit(0);
+}
+
+fn reaper() {
     loop {
-        crate::info!("init: waiting for any child to exit...");
+        crate::info!("waiting for any child to exit...");
         if let Some((id, code)) = crate::sched::wait_any() {
-            crate::info!("init: reaped zombie task {:?}, exit code: {}", id, code);
+            crate::info!("reaped zombie task {:?}, exit code: {}", id, code);
         }
     }
 }

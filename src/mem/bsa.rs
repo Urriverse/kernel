@@ -1,5 +1,3 @@
-// TODO: fix PCP false sharing
-
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::mem::MaybeUninit;
 use crate::mem::{pfm, pmr, kdm::Paddr, ema};
@@ -96,6 +94,7 @@ impl FreeArea {
     }
 }
 
+#[repr(align(64))]
 struct PerCpuCache {
     pages: [Vec<usize, PCP_SIZE>; MAX_ORDER],
 }

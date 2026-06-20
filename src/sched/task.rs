@@ -1,7 +1,7 @@
 // src/sched/task.rs
-use crate::{arch::{gdt::{USER_CODE_SELECTOR, USER_DATA_SELECTOR}, trap::TrapFrame}, mem::{ptm::Polen, vma::Vmm}, sched::proc::Process, sync::Nutex};
+use crate::{arch::{gdt::{USER_CODE_SELECTOR, USER_DATA_SELECTOR}, trap::TrapFrame}, sched::proc::Process};
 use core::sync::atomic::{AtomicU64, Ordering};
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(pub u64);
@@ -20,8 +20,7 @@ pub struct Priority(pub i32);
 
 impl Priority {
     pub const fn nice_to_weight(nice: i32) -> u64 {
-        // Linux-style weight calculation: weight = 1024 * 1.25^(-nice)
-        // Упрощенная таблица для -20..19
+        // weight = 1024 * 1.25^(-nice)
         const WEIGHTS: [u64; 40] = [
             88761, 71755, 58481, 46236, 37617, 30483, 24513, 19862,
             16124, 13031, 10550, 8546, 6912, 5594, 4519, 3659,
@@ -47,8 +46,8 @@ pub struct Task {
     pub user_stack: usize,    // Top of user stack (if user task)
     pub cpu_affinity: Option<usize>,  // None = any CPU
     pub name: &'static str,
-    pub parent: Option<TaskId>,      // Кто создал эту задачу
-    pub exit_code: i32,              // Код завершения (0 = успех)
+    pub parent: Option<TaskId>,
+    pub exit_code: i32,
     pub process: Arc<Process>,
     pub kernel_stack_top: usize,
 }
@@ -87,7 +86,6 @@ impl Task {pub fn new_user(
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         
-        // Резервируем место для выравнивания
         let initial_kern_rsp = kernel_stack_top - 8;
         unsafe {
             *(initial_kern_rsp as *mut u64) = 0;
@@ -116,14 +114,7 @@ impl Task {pub fn new_user(
             name,
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process {
-                pid: 0,
-                parent: None,
-                address_space: Arc::new(Nutex::new(Polen::reference())),
-                vmm: Arc::new(Nutex::new(Vmm::new())),
-                threads: Vec::new(),
-                syscall_handler: crate::sched::native_syscall_handler,
-            }),
+            process: Arc::new(Process::default()),
             kernel_stack_top: 0,
         })
     }
@@ -137,7 +128,6 @@ impl Task {pub fn new_user(
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         
-        // Резервируем 8 байт под фейковый адрес возврата, чтобы RSP был 8 mod 16
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
             *(initial_rsp as *mut u64) = 0; 
@@ -166,14 +156,7 @@ impl Task {pub fn new_user(
             name,
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process {
-                pid: 0,
-                parent: None,
-                address_space: Arc::new(Nutex::new(Polen::reference())),
-                vmm: Arc::new(Nutex::new(Vmm::new())),
-                threads: Vec::new(),
-                syscall_handler: crate::sched::native_syscall_handler,
-            }),
+            process: Arc::new(Process::default()),
             kernel_stack_top: 0,
         })
     }

@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,9 +14,6 @@ from pathlib import Path
 
 os.system("clear")
 
-# ----------------------------------------------------------------------
-# Cargo‑style log helpers
-# ----------------------------------------------------------------------
 GREEN   = "\033[32;1m"
 BLUE    = "\033[34;1m"
 YELLOW  = "\033[33;1m"
@@ -43,9 +41,6 @@ def error(msg: str, exit_code: int = 1):
     sys.exit(exit_code)
 
 
-# ----------------------------------------------------------------------
-# Paths & constants
-# ----------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # kernel/
 TARGET       = PROJECT_ROOT / "target"
 PROFILES_DIR = PROJECT_ROOT / "etc" / "profiles"
@@ -55,11 +50,7 @@ LIMINE_VERSION = "12.3.2"
 LIMINE_URL   = f"https://github.com/limine-bootloader/limine/releases/download/v{LIMINE_VERSION}/limine-binary.tar.gz"
 
 
-# ----------------------------------------------------------------------
-# Tool validation
-# ----------------------------------------------------------------------
 def check_tools():
-    """Verify that all required external commands are available."""
     required = {
         "cargo":                   "Rust build tool",
         "xorriso":                 "ISO creation",
@@ -74,11 +65,7 @@ def check_tools():
         error("Missing required tools: " + ", ".join(missing) + ".\nPlease install them and try again.")
 
 
-# ----------------------------------------------------------------------
-# Utility
-# ----------------------------------------------------------------------
 def run(cmd: list[str], **kwargs):
-    """Thin wrapper around subprocess.run(..., check=True)."""
     try:
         subprocess.run(cmd, check=True, **kwargs)
     except subprocess.CalledProcessError as e:
@@ -86,10 +73,6 @@ def run(cmd: list[str], **kwargs):
 
 
 def is_up_to_date(target: Path, *sources: Path) -> bool:
-    """
-    Return True if `target` exists and its mtime is >= mtime of every source.
-    If any source is missing, return False (trigger a rebuild).
-    """
     if not target.exists():
         return False
     target_mtime = os.path.getmtime(target)
@@ -101,11 +84,7 @@ def is_up_to_date(target: Path, *sources: Path) -> bool:
     return True
 
 
-# ----------------------------------------------------------------------
-# Profile management
-# ----------------------------------------------------------------------
 def load_profiles() -> dict[str, dict]:
-    """Load all profile definitions from etc/profiles/*.toml."""
     if not PROFILES_DIR.is_dir():
         error(
             f"Project filesystem corrupted: {PROFILES_DIR} does not exist or is not a directory.\n"
@@ -129,7 +108,6 @@ def load_profiles() -> dict[str, dict]:
 
 
 def read_current_profile() -> str:
-    """Return the currently selected profile name."""
     try:
         return PROFILE_FILE.read_text().strip()
     except FileNotFoundError:
@@ -137,16 +115,11 @@ def read_current_profile() -> str:
 
 
 def write_current_profile(profile: str):
-    """Persist the selected profile name."""
     TARGET.mkdir(exist_ok=True)
     PROFILE_FILE.write_text(profile + "\n")
 
 
 def generate_cargo_toml(profile_name: str):
-    """
-    Create Cargo.toml from the template etc/Cargo.in,
-    replacing {KERNEL_NAME} and {profile_name}.
-    """
     template_path = PROJECT_ROOT / "etc" / "Cargo.in"
     target_path   = PROJECT_ROOT / "Cargo.toml"
 
@@ -162,7 +135,6 @@ def generate_cargo_toml(profile_name: str):
 
 
 def ensure_cargo_toml():
-    """Regenerate Cargo.toml if it's older than the template."""
     profile_name = read_current_profile()
     if not profile_name:
         error("No profile selected. Run 'do config [PROFILE]' first.")
@@ -175,39 +147,27 @@ def ensure_cargo_toml():
         generate_cargo_toml(profile_name)
 
 
-# ----------------------------------------------------------------------
-# Limine fetching & building (with version tracking)
-# ----------------------------------------------------------------------
 def limine_dir() -> Path:
-    """Root of the extracted Limine source."""
     return TARGET / "limine" / "limine-binary"
 
 
 def limine_binary(name: str) -> Path:
-    """Path to a built Limine executable / binary."""
     return limine_dir() / name
 
 
 def limine_version_file() -> Path:
-    """Path to the file storing the fetched Limine version."""
     return TARGET / "limine" / ".version"
 
 
 def prepare_limine():
-    """
-    Ensure Limine is fetched, extracted, and built.
-    Only refetches if the version has changed.
-    """
     version_file = limine_version_file()
     if limine_dir().is_dir() and version_file.exists():
         if version_file.read_text().strip() == LIMINE_VERSION:
             return
 
-    # If we reach here, we need to (re-)fetch Limine
     if limine_dir().exists():
-        shutil.rmtree(limine_dir().parent)   # remove target/limine entirely
+        shutil.rmtree(limine_dir().parent)
 
-    # Download
     status("Fetching", f"limine v{LIMINE_VERSION}")
     archive = TARGET / "limine.tgz"
     TARGET.mkdir(exist_ok=True)
@@ -218,27 +178,20 @@ def prepare_limine():
     except Exception as exc:
         error(f"Failed to download Limine: {exc}")
 
-    # Extract
     with tarfile.open(archive, "r:gz") as tar:
         tar.extractall(path=TARGET / "limine")
 
-    # Build
     status("Compiling", "limine")
     run(
         ["make", "-C", str(limine_dir()), "--no-print-directory", "-s"],
         cwd=limine_dir(),
     )
-    # Persist the version we just built
     version_file.parent.mkdir(parents=True, exist_ok=True)
     version_file.write_text(LIMINE_VERSION + "\n")
     finished(f"limine v{LIMINE_VERSION}")
 
 
-# ----------------------------------------------------------------------
-# Build steps
-# ----------------------------------------------------------------------
 def build_kernel(profile: dict):
-    """Run `cargo build` with the selected profile and features."""
     cargo_opts = profile["cargo"]
     env = os.environ.copy()
     env.update(profile.get("env", {}))
@@ -256,7 +209,6 @@ def build_kernel(profile: dict):
 
 
 def setup_iso(profile_name: str):
-    """Populate the ISO root filesystem with kernel and bootloader files."""
     iso_root = TARGET / "x86_64-unknown-none" / profile_name / "iso-root"
     kernel_bin = TARGET / "x86_64-unknown-none" / (profile_name if profile_name != "dev" else "debug" )/ KERNEL_NAME
 
@@ -269,30 +221,25 @@ def setup_iso(profile_name: str):
     boot_dir.mkdir(parents=True, exist_ok=True)
     efi_dir.mkdir(parents=True, exist_ok=True)
 
-    # Limine configuration
     shutil.copy2(PROJECT_ROOT / "etc" / "limine.conf", boot_dir / "limine.conf")
 
-    # Limine bootloader files
     for fname in ["limine-bios.sys", "limine-bios-cd.bin", "limine-uefi-cd.bin"]:
         src = limine_binary(fname)
         if not src.is_file():
             error(f"Missing Limine file: {src}")
         shutil.copy2(src, boot_dir)
 
-    # EFI executable
     efi_src = limine_binary("BOOTX64.EFI")
     if not efi_src.is_file():
         error(f"Missing Limine EFI file: {efi_src}")
     shutil.copy2(efi_src, efi_dir)
 
-    # Kernel binary
     shutil.copy2(kernel_bin, iso_root / "boot" / KERNEL_NAME)
 
     finished("ISO filesystem")
 
 
 def build_iso(profile_name: str):
-    """Create the bootable ISO image with xorriso and limine-deploy."""
     iso_root = TARGET / "x86_64-unknown-none" / profile_name / "iso-root"
     iso_name = TARGET / "x86_64-unknown-none" / profile_name / "image.iso"
 
@@ -309,16 +256,11 @@ def build_iso(profile_name: str):
         "-o", str(iso_name),
     ], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
 
-    # Deploy Limine
     run([str(limine_binary("limine")), "bios-install", str(iso_name)], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     finished("ISO image")
 
 
 def iso_needs_rebuild(profile_name: str) -> bool:
-    """
-    Return True if the ISO must be rebuilt, i.e. it doesn't exist or
-    any of its inputs are newer.
-    """
     iso = TARGET / "x86_64-unknown-none" / profile_name / "image.iso"
     sources = [
         TARGET / "x86_64-unknown-none" / profile_name / KERNEL_NAME,
@@ -327,37 +269,35 @@ def iso_needs_rebuild(profile_name: str) -> bool:
         limine_binary("limine-bios-cd.bin"),
         limine_binary("limine-uefi-cd.bin"),
         limine_binary("BOOTX64.EFI"),
-        limine_binary("limine"),            # the deployment tool itself
-        limine_version_file(),              # version change triggers a rebuild
+        limine_binary("limine"),
+        limine_version_file(),
     ]
     return not is_up_to_date(iso, *sources)
 
 
-# ----------------------------------------------------------------------
-# QEMU runner
-# ----------------------------------------------------------------------
 def run_qemu(profile_name: str):
-    """Boot the ISO in QEMU."""
     iso_name = TARGET / "x86_64-unknown-none" / profile_name / "image.iso"
     if not iso_name.is_file():
         error(f"ISO not found: {iso_name}")
+
+    elf_path = TARGET / "x86_64-unknown-none" / profile_name / KERNEL_NAME
+    if not elf_path.exists():
+        elf_path = TARGET / "x86_64-unknown-none" / "debug" / KERNEL_NAME
 
     kvm = os.access("/dev/kvm", os.W_OK)
     if kvm:
         status("Available", "KVM")
 
     finished("guest startup")
-
-    print("-"*SEP)
+    print("-" * SEP)
 
     qemu_cmd = [
         "qemu-system-x86_64",
-        "-device",
-        "isa-debug-exit,iobase=0x501,iosize=0x01",
+        "-device", "isa-debug-exit,iobase=0x501,iosize=0x01",
         "-no-reboot",
         "-cdrom", str(iso_name),
         "-boot", "d",
-        *( [ "--enable-kvm" ] if kvm else []),
+        *(["--enable-kvm"] if kvm else []),
         "-cpu", "host",
         "-m", "2G",
         "-smp", "4",
@@ -366,22 +306,86 @@ def run_qemu(profile_name: str):
         "-machine", "q35,accel=kvm:tcg",
         "-device", "ahci,id=ahci",
         "-rtc", "base=utc",
-        # "-nographic",
     ]
-    subprocess.run(qemu_cmd)
-    print("\b"+"-"*SEP)
+
+    proc = subprocess.Popen(
+        qemu_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    cpu_re = re.compile(r'CPU #(\d+)')
+    begin_re = re.compile(r'\$\$ST:BEGIN\$\$')
+    end_re   = re.compile(r'\$\$ST:END\$\$')
+    addr_re  = re.compile(r'(#\d+\s+)(0x[0-9a-fA-F]+)')
+
+    inside_stack = False
+    stack_cpu = None
+    addr_cache = {}
+
+    def resolve_addr(addr: str) -> str:
+        if addr in addr_cache:
+            return addr_cache[addr]
+        try:
+            output = subprocess.check_output(
+                ["addr2line", "-e", str(elf_path), "-f", "-i", "-p", "-C", addr],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                env={'LANG': 'C'},
+            ).strip()
+        except subprocess.CalledProcessError:
+            output = "??:0"
+        if output.startswith(("__rustc::", "core::", "alloc::", "<__rustc::", "<core::", "<alloc::")) and 0:
+            result = addr
+        else:
+            result = output
+        addr_cache[addr] = result
+        return result
+
+    try:
+        for line in iter(proc.stdout.readline, ''):
+            if not inside_stack:
+                if begin_re.search(line):
+                    m = cpu_re.search(line)
+                    if m:
+                        stack_cpu = m.group(1)
+                        inside_stack = True
+                else:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            else:
+                if end_re.search(line):
+                    inside_stack = False
+                    stack_cpu = None
+                    continue
+
+                m = cpu_re.search(line)
+                if m and m.group(1) != stack_cpu:
+                    continue
+
+                def repl(match):
+                    prefix = match.group(1)
+                    addr = match.group(2)
+                    resolved = resolve_addr(addr)
+                    return f"{prefix}{resolved}"
+
+                new_line = addr_re.sub(repl, line)
+                sys.stdout.write(new_line)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        proc.terminate()
+        proc.wait()
 
 
-# ----------------------------------------------------------------------
-# Top‑level commands
-# ----------------------------------------------------------------------
 def cmd_clear():
-    """Remove build artifacts (cargo clean)."""
     run(["cargo", "clean"])
 
 
 def cmd_build(profiles: dict):
-    """Build kernel and ISO, skipping steps when possible."""
     ensure_cargo_toml()
     prepare_limine()
 
@@ -393,18 +397,16 @@ def cmd_build(profiles: dict):
         setup_iso(profile_name)
         build_iso(profile_name)
     else:
-        finished("ISO image (up‑to‑date)")
+        finished("ISO image (up-to-date)")
 
 
 def cmd_run(profiles: dict):
-    """Build everything and launch QEMU."""
     cmd_build(profiles)
     profile_name = read_current_profile()
     run_qemu(profile_name)
 
 
 def cmd_config(profiles: dict, args):
-    """Select a build profile and regenerate Cargo.toml."""
     profile_name = args.profile
     if profile_name is None:
         profile_name = "dev"
@@ -416,9 +418,6 @@ def cmd_config(profiles: dict, args):
     generate_cargo_toml(profile_name)
 
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
         description="Build and test pipeline for the kernel."
@@ -437,7 +436,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Always check required tools before doing anything
     check_tools()
 
     profiles = load_profiles()

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Interactive profile selector for the kernel build system.
-
-Navigates with ↑/↓, confirms with Enter, quits with Q.
-Runs `do config <profile>` after selection.
-"""
 
 import os
 import subprocess
@@ -14,9 +8,6 @@ import tomllib
 import tty
 from pathlib import Path
 
-# ----------------------------------------------------------------------
-# ANSI helpers
-# ----------------------------------------------------------------------
 GREEN   = "\033[0;32m"
 BOLD    = "\033[1m"
 RED     = "\033[0;31m"
@@ -24,9 +15,6 @@ NC      = "\033[0m"
 CLEAR   = "\033[H\033[2J"
 INVERSE = "\033[7m"
 
-# ----------------------------------------------------------------------
-# Project‑relative paths
-# ----------------------------------------------------------------------
 SCRIPT_DIR   = Path(__file__).resolve().parent          # etc/bin/
 PROJECT_ROOT = SCRIPT_DIR.parent.parent                 # kernel/
 PROFILES_DIR = PROJECT_ROOT / "etc" / "profiles"
@@ -34,7 +22,6 @@ DO_SCRIPT    = SCRIPT_DIR / "do"                        # etc/bin/do
 
 
 def load_profiles() -> list[dict]:
-    """Return sorted list of profiles with their descriptions."""
     if not PROFILES_DIR.is_dir():
         print(f"{RED}error:{NC} {PROFILES_DIR} not found.", file=sys.stderr)
         sys.exit(1)
@@ -59,9 +46,6 @@ def load_profiles() -> list[dict]:
     return profiles
 
 
-# ----------------------------------------------------------------------
-# Terminal raw mode – always restores
-# ----------------------------------------------------------------------
 class RawTerminal:
     def __enter__(self):
         self.fd = sys.stdin.fileno()
@@ -87,12 +71,11 @@ class RawTerminal:
 
 
 def draw_menu(profiles: list[dict], selected: int):
-    """Render the interactive menu with extra empty lines at the top."""
     lines = [
         CLEAR,
-        "\r\n",  # extra empty line 1
-        "\r\n",  # extra empty line 2
-        "\r\n",  # extra empty line 3
+        "\r\n",
+        "\r\n",
+        "\r\n",
         f"  {GREEN}Select kernel build profile:{NC}\r\n",
         "\r\n",
     ]
@@ -111,7 +94,6 @@ def draw_menu(profiles: list[dict], selected: int):
 
 
 def interactive_select(profiles: list[dict]) -> str:
-    """Display menu and return chosen profile name."""
     idx = 0
     try:
         with RawTerminal() as term:
@@ -137,11 +119,7 @@ def interactive_select(profiles: list[dict]) -> str:
     return profiles[idx]["name"]
 
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
 def main():
-    # 1. Verify that `do` exists and is executable
     if not DO_SCRIPT.is_file() or not os.access(DO_SCRIPT, os.X_OK):
         print(
             f"{RED}error:{NC} cannot execute `{DO_SCRIPT}`.\n"
@@ -150,11 +128,9 @@ def main():
         )
         sys.exit(1)
 
-    # 2. Load profiles and get choice
     profiles = load_profiles()
     chosen = interactive_select(profiles)
 
-    # 3. Clear screen and run `do config <chosen>`
     sys.stdout.write(CLEAR)
     sys.stdout.flush()
 

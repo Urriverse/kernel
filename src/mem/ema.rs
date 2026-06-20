@@ -33,9 +33,9 @@ impl EarlyMemAlloc
         let limit = (largest.base + 4095) & !0xfff;
 
         info!("EMA initialized.");
-        debug!("~ top      = {:#X}", top   );
-        debug!("~ bottom   = {:#X}", bottom);
-        debug!("~ limit    = {:#X}", limit );
+        // debug!("~ top      = {:#X}", top   );
+        // debug!("~ bottom   = {:#X}", bottom);
+        // debug!("~ limit    = {:#X}", limit );
 
         Self { top, bottom, limit }
     }

@@ -84,7 +84,6 @@ impl Polen {
     }
 
     pub fn reference() -> Self {
-        info!("Polen::reference: creating shallow copy of current tables (new PML4 only)");
         let current = Exco::current();
 
         let new_root = crate::arch::paging::alloc_tab_zeroed();
@@ -104,7 +103,6 @@ impl Polen {
             owned: true,
         };
 
-        info!("Polen::reference: new CR3 {:#018X} (shallow, lower half cleared)", new_exco.cr3);
         Polen { exco: new_exco }
     }
 

@@ -1,7 +1,3 @@
-//! framebuffer driver.
-
-// linter is kinda got mad on this macro hell, but compilation is fine and execution is well.
-
 use crate::driverkit::*;
 use alloc::boxed::Box;
 

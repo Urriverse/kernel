@@ -91,7 +91,7 @@ impl<'a, T> core::ops::Deref for NutexGuard<'a, T>
     type Target = T;
     fn deref(&self) -> &'a T
     {
-        unsafe { &mut *self.mutex.data.get() }
+        unsafe { self.mutex.data.get().as_mut_unchecked() }
     }
 }
 

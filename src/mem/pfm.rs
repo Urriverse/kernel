@@ -47,7 +47,7 @@ static mut SECTIONS: *mut *mut Page = ptr::null_mut();
 static mut MAX_SECTIONS: usize = 0;
 
 pub fn init() {
-    debug!("PFM: Initializing SPARSEMEM page frame metadata");
+    // debug!("PFM: Initializing SPARSEMEM page frame metadata");
 
     let size_of_page = core::mem::size_of::<Page>();
     let bytes_per_section = PAGES_PER_SECTION * size_of_page;
@@ -67,11 +67,11 @@ pub fn init() {
     }
 
     let max_sec = (max_pfn + PAGES_PER_SECTION - 1) / PAGES_PER_SECTION;
-    debug!("PFM: Max PFN = {}, Max sections = {}", max_pfn, max_sec);
+    // debug!("PFM: Max PFN = {}, Max sections = {}", max_pfn, max_sec);
 
     let sec_array_bytes = max_sec * core::mem::size_of::<*mut Page>();
     let sec_array_pages = (sec_array_bytes + 4095) / 4096;
-    debug!("PFM: Allocating {} pages for sections array", sec_array_pages);
+    // debug!("PFM: Allocating {} pages for sections array", sec_array_pages);
 
     let sec_array_paddr = crate::mem::ema::alloc(sec_array_pages);
     if sec_array_paddr.to_raw() == 0 {
@@ -79,7 +79,7 @@ pub fn init() {
     }
 
     let sec_array_ptr: *mut *mut Page = sec_array_paddr.to_virt().to_ptr_mut();
-    debug!("PFM: Sections array at {:#X}", sec_array_ptr as usize);
+    // debug!("PFM: Sections array at {:#X}", sec_array_ptr as usize);
 
     for i in 0..max_sec {
         unsafe {

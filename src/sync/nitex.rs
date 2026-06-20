@@ -59,7 +59,7 @@ impl<T> core::ops::Deref for NitexGuard<'_, T>
     type Target = T;
     fn deref(&self) -> &T
     {
-        unsafe { &*self.mutex.data.get() }
+        unsafe { self.mutex.data.get().as_ref_unchecked() }
     }
 }
 

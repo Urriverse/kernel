@@ -1,9 +1,9 @@
 use core::fmt::Write;
 
-use crate::sync::Nutex;
+use crate::sync::Litex;
 use heapless::{Vec, String};
 
-mod dev;
+pub mod dev;
 
 const MAX_MSG_LEN: usize = 1024;
 
@@ -19,8 +19,8 @@ pub const fn str4_to_u32(s: &str) -> u32
      (b[3] as u32)
 }
 
-#[cfg(    feature = "lowlog" )] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>24} : {}: {}"}}
-#[cfg(not(feature = "lowlog"))] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>20}:{:<3}: {:>24} : {}: {}"}}
+#[cfg(    feature = "lowlog" )] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>32} : {}: {}"}}
+#[cfg(not(feature = "lowlog"))] macro_rules! FMT {() => {"~ {:16.2} CPU #{} : {:>20}:{:<3} : {}: {}"}}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -104,7 +104,7 @@ impl AttLvl
     }
 }
 
-pub static SINKS: Nutex<Vec<&'static dyn Sink, 256>> = Nutex::new(Vec::new());
+pub static SINKS: Litex<Vec<&'static dyn Sink, 256>> = Litex::new(Vec::new());
 
 pub fn add(sink: &'static dyn Sink)
 {
@@ -116,6 +116,7 @@ pub fn init()
     #[cfg(feature = "devlog")] add(*dev::SINK);
 }
 
+#[allow(unused)]
 pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>)
 {
     #[cfg(feature = "lowlog")] let _ = file;
@@ -136,20 +137,21 @@ pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa:
             #[cfg(    feature = "lowlog" )]
             let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, al.pretty(), c.as_str()));
             #[cfg(not(feature = "lowlog"))]
-            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, al.pretty(), c.as_str()));
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, al.pretty(), c.as_str()));
         }
         else
         {
             #[cfg(    feature = "lowlog" )]
             let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, al.as_str(), c.as_str()));
             #[cfg(not(feature = "lowlog"))]
-            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, al.as_str(), c.as_str()));
+            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, al.as_str(), c.as_str()));
         }
 
         sink.write(m.as_str());
     }
 }
 
+#[allow(unused)]
 pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str)
 {
     #[cfg(feature = "lowlog")] let _ = file;
@@ -173,7 +175,37 @@ pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32,
         let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, l, s));
 
         #[cfg(not(feature = "lowlog"))]
-        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, modpath, l, s));
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, l, s));
+
+        sink.write(m.as_str());
+    }
+}
+
+#[allow(unused)]
+pub unsafe fn str_log_noblock(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str)
+{
+    #[cfg(feature = "lowlog")] let _ = file;
+    #[cfg(feature = "lowlog")] let _ = line;
+
+    let g = unsafe { SINKS.inner() };
+
+    for sink in &*g
+    {
+        let mut m = Msg::new();
+
+        let l;
+
+        if (sink.kind().attrs & SinkAttrs::Pretty) != SinkAttrs::empty() {
+            l = al.pretty();
+        } else {
+            l = al.as_str();
+        }
+
+        #[cfg(    feature = "lowlog" )]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, l, s));
+
+        #[cfg(not(feature = "lowlog"))]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, l, s));
 
         sink.write(m.as_str());
     }
