@@ -77,4 +77,10 @@ pub enum Error {
     /// This is returned by `link` or `add_root` when attempting to create
     /// an entry with a name that is already taken.
     Found,
+
+    AlreadyExists,
+
+    InvalidPath,
+    
+    NotMounted,
 }

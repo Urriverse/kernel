@@ -49,6 +49,7 @@
 #![feature(likely_unlikely)]
 #![feature(const_destruct)]
 #![feature(const_cmp)]
+#![feature(mem_copy_fn)]
 
 #![allow(unused)]
 #![allow(clippy::missing_transmute_annotations)]
@@ -64,9 +65,8 @@
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
-use core::ptr::addr_of;
-use alloc::string::ToString;
-use crate::{sched::current_process, vfs::{MetaBlock, PvfsMb}};
+use alloc::{string::ToString, sync::Arc};
+use sched::current_process;
 
 // ============================================================================
 // EXTERNAL CRATES
@@ -270,89 +270,33 @@ entry! {
     }
 }
 
-// ============================================================================
-// LAZY-STATIC VFS TEST STRUCTURES
-// ============================================================================
-
-lazy_static! {
-    /// Purely virtual filesystem instance for testing.
-    ///
-    /// `PvfsMb` is an in-memory filesystem that doesn't require a block device.
-    /// It's used to test VFS operations early in the boot process.
-    static ref MBINST: PvfsMb = PvfsMb::new();
-
-    /// Static reference to a `MetaBlock` used for the test filesystem.
-    ///
-    /// This is a globally accessible mount block that provides VFS operations
-    /// via the `PVFS_VTABLE` function table.
-    static ref TESTFSMBLK0: &'static MetaBlock
-    =   vfs::get_mblk(
-        vfs::reg_mblk(
-            vfs::new_mblock(
-                0, &vfs::PVFS_VTABLE,
-                unsafe {
-                    (
-                        addr_of!(*MBINST) as *mut ()
-                    ).as_mut_unchecked()
-                }
-            )
-        )
-    ).unwrap();
-}
-
-// ============================================================================
-// KERNEL TASKS
-// ============================================================================
-
-/// VFS test task – validates in-memory filesystem operations.
-///
-/// This task:
-/// 1. Retrieves the current process's root registry
-/// 2. Creates a new root mount point named "pv" for the test FS
-/// 3. Creates a new file in the test FS
-/// 4. Writes a marker string to the file
-/// 5. Reads back the data and logs it
-/// 6. Exits with code 0
-///
-/// # Panics
-/// Panics if any VFS operation fails, which would indicate a VFS regression.
 fn vfs_test() {
-    // Get the current process's root registry
+    // Create PVFS instance
+    let pvfs = Arc::new(vfs::Pvfs::new());
+    let mb_id = vfs::register_mblock(pvfs.clone() as Arc<dyn vfs::FileSystem>);
+    let mb = vfs::get_mblock(mb_id).unwrap();
+
+    // Create root directory
+    let root_inode = vfs::Inode::new();
+    let root_id = vfs::new(&mb, root_inode, vfs::Kind::Directory).expect("Failed to create root dir");
+
+    // Mount it as "root" in the process namespace
     let roots = current_process().expect("NOPID").roots.clone();
-    debug!("Got roots");
+    roots.mount_new("root".to_string(), root_id).expect("Mount failed");
 
-    // Create a new inode and attach it to the test filesystem
-    let mut inode = vfs::Inode::new();
-    inode.mblock = &TESTFSMBLK0;
-    debug!("Inode created");
+    // Create a file
+    let file_inode = vfs::Inode::new();
+    let file_id = vfs::new(&mb, file_inode, vfs::Kind::File).expect("Failed to create file");
 
-    // Register a new root mount point named "pv"
-    if let Err(e) = roots.add_new_root("pv".to_string(), inode.id) {
-        panic!("{:?}", e);
-    }
-    debug!("Root created");
+    // Link it into root
+    vfs::link(&mb, root_id, "testfile", file_id).expect("Link failed");
 
-    // Create a file in the test filesystem
-    let iid = match vfs::new(&TESTFSMBLK0, inode, vfs::Kind::File) {
-        Ok(i) => i,
-        Err(e) => panic!("{:?}", e),
-    };
-    debug!("File created");
+    // Write and read back
+    vfs::write(&mb, file_id, 0, b"[NOT FAILED]").expect("Write failed");
+    let mut buf = *b"[FAILED]    ";
+    let n = vfs::read(&mb, file_id, 0, &mut buf).expect("Read failed");
+    debug!("vfs test: {}", str::from_utf8(&buf[..n]).unwrap());
 
-    // Write test data to the file
-    if let Err(e) = vfs::write(&iid, 0, b"[NOT FAILED]") {
-        panic!("E: {:?}", e)
-    }
-    debug!("File written");
-
-    // Read back the data
-    let mut buf: [u8; 12] = *b"[FAILED]    ";
-    if let Err(e) = vfs::read(&iid, 0, &mut buf) {
-        panic!("E: {:?}", e)
-    }
-    debug!("vfs test: {}", str::from_utf8(&buf).unwrap());
-
-    // Exit cleanly
     sched::exit(0);
 }
 
