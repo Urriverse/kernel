@@ -207,7 +207,7 @@ pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str, ro
         if let Some(p) = current_process() {
             proc = (*p).clone()
         } else {
-            proc = Process::default();
+            proc = Process::new();
         }
         proc.roots = x;
         task.process = Arc::new(proc);
@@ -246,7 +246,7 @@ pub fn exit(code: i32) -> ! {
     debug!(
         "Exiting task {} (PID {}) with code {}",
         current_id.0,
-        current_process().unwrap_or(Arc::new(Process::default())).pid,
+        current_process().unwrap_or(Arc::new(Process::new())).pid,
         code,
     );
 

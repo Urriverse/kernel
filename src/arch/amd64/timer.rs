@@ -48,10 +48,10 @@
 //!   because it is called before interrupts are enabled.
 
 use core::hint::unlikely;
-
+use core::sync::atomic::{compiler_fence, Ordering::SeqCst as CompilerOrdering};
 use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::Nutex};
 use core::arch::naked_asm;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering, fence};
 
 // ============================================================================
 // GLOBAL STATE
@@ -251,7 +251,9 @@ pub fn init() {
 
     // Read the HPET period from the capabilities register.
     let cap = inst.cap();
+
     let period_fs = cap >> 32;
+
     if unlikely(period_fs == 0) {
         panic!("HPET period is 0, cannot calibrate!")
     }
@@ -262,26 +264,44 @@ pub fn init() {
 
     // Prepare the APIC timer.
     inst.disable();
+
+    compiler_fence(CompilerOrdering);
+
     inst.reset();
+
+    compiler_fence(CompilerOrdering);
 
     // Set divisor to x16 (code 3) and timer to one‑shot mode.
     *lapic.div() = 3;               // x16
     *lapic.lvt_timer() = 0x00010000; // oneshot, masked initially
     *lapic.icr() = !0;              // maximum initial value
 
+    compiler_fence(CompilerOrdering);
+
     // Start the HPET.
     inst.enable();
 
+    compiler_fence(CompilerOrdering);
+
     // Wait for the HPET to reach the target count.
-    let start_hpet = *inst.counter();
-    while (*inst.counter() - start_hpet) < hpet_ticks_to_wait {
-        core::hint::spin_loop();
+    let start_hpet = *inst.counter();;
+
+    loop {
+        // don't `pause`: we want more precise callibration. CPU
+        // const is acceptable as loop is not too long (apx. 10ms).
+        // core::hint::spin_loop();
+        compiler_fence(CompilerOrdering);
+
+        if (*inst.counter() - start_hpet) < hpet_ticks_to_wait { break }
     }
 
     inst.disable();
 
+    compiler_fence(CompilerOrdering);
+
     // Read the remaining APIC timer count and compute elapsed ticks.
     let cur_lapic = *lapic.ccr();
+
     let elapsed = !0 - cur_lapic;
 
     // Store the number of ticks per 10 ms (for the scheduler).
@@ -291,6 +311,7 @@ pub fn init() {
 
     // Set the APIC timer to periodic mode with the calibrated count.
     *lapic.lvt_timer() = (1 << 17) | (crate::arch::idt::TIMER_VECTOR as u32); // periodic
+
     *lapic.icr() = elapsed;
 }
 

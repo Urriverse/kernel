@@ -234,6 +234,7 @@ impl Process {
     /// assert_eq!(proc.pid, 0);
     /// ```
     pub fn new() -> Self {
+        // FIXME: triple fault before entry point when opt-level > 0
         Self {
             pid: next(),
             parent: None,
@@ -244,13 +245,6 @@ impl Process {
             roots: RootRef::new(RootReg::new()),
             level: 0,
         }
-    }
-}
-
-impl Default for Process {
-    /// Creates a new, default process (same as `Process::new()`).
-    fn default() -> Self {
-        Self::new()
     }
 }
 

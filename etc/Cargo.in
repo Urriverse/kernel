@@ -17,12 +17,13 @@ acpi = {{ version = "6", features = ["alloc"] }}
 panic = "abort"
 
 [profile.release]
-panic = "abort"
-opt-level = 0 # TODO: fix issue and change back to 3
-lto = true
+opt-level = 3
 debug = false
 strip = true
+debug-assertions = false
 overflow-checks = false
+lto = false  # LTO makes kernel slower!
+panic = 'abort'
 
 [profile.dbg]
 inherits = "dev"

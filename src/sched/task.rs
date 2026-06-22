@@ -114,7 +114,7 @@ impl Task {pub fn new_user(
             name,
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process::default()),
+            process: Arc::new(Process::new()),
             kernel_stack_top: 0,
         })
     }
@@ -156,7 +156,7 @@ impl Task {pub fn new_user(
             name,
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process::default()),
+            process: Arc::new(Process::new()),
             kernel_stack_top: 0,
         })
     }
