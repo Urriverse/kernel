@@ -51,7 +51,7 @@ use core::hint::unlikely;
 use core::sync::atomic::{compiler_fence, Ordering::SeqCst as CompilerOrdering};
 use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::Nutex};
 use core::arch::naked_asm;
-use core::sync::atomic::{AtomicU64, Ordering, fence};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
 // GLOBAL STATE

@@ -60,9 +60,15 @@ mod litex;   // Interrupt‑disabling spinlock with unsafe inner
 // RE‑EXPORTS
 // ============================================================================
 
+#[allow(unused_imports)]
 pub use nutex::*;   // Nutex, NutexGuard
+#[allow(unused_imports)]
 pub use mutex::*;   // Mutex, MutexGuard
+#[allow(unused_imports)]
 pub use nitex::*;   // Nitex, NitexGuard
+#[allow(unused_imports)]
 pub use barrier::*;   // Barrier
+#[allow(unused_imports)]
 pub use rwlock::*;  // RwLock, RwLockReadGuard, RwLockWriteGuard
+#[allow(unused_imports)]
 pub use litex::*;   // Litex, LitexGuard

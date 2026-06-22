@@ -55,6 +55,7 @@
 #![warn(unused_braces)]
 #![warn(unused_comparisons)]
 #![warn(unused_import_braces)]
+#![warn(unused_imports)]
 #![warn(unused_labels)]
 #![warn(unused_mut)]
 #![warn(unused_parens)]

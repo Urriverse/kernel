@@ -226,7 +226,7 @@ impl<T> core::ops::Deref for NutexGuard<'_, T> {
     /// The lock is held and interrupts are disabled, so the data is not being
     /// mutated by other threads or interrupt handlers.
     fn deref(&self) -> &T {
-        unsafe { self.mutex.data.get().as_mut_unchecked() }
+        unsafe { self.mutex.data.get().as_ref_unchecked() }
     }
 }
 

@@ -187,28 +187,34 @@ impl<T> Litex<T> {
     /// # Returns
     /// `Some(LitexGuard)` if the lock was acquired, `None` otherwise.
     pub fn try_lock(&self) -> Option<LitexGuard<'_, T>> {
+        // Save the current interrupt state and disable interrupts.
+        let rflags: u64;
+        unsafe {
+            asm!(
+                "pushfq",
+                "pop {0}",
+                out(reg) rflags,
+                options(nomem, preserves_flags)
+            );
+            asm!("cli", options(nomem, nostack, preserves_flags));
+        }
         // Try to acquire the lock with a single CAS attempt.
         if self
             .lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            // Save the current interrupt state and disable interrupts.
-            let rflags: u64;
-            unsafe {
-                asm!(
-                    "pushfq",
-                    "pop {0}",
-                    out(reg) rflags,
-                    options(nomem, preserves_flags)
-                );
-                asm!("cli", options(nomem, nostack, preserves_flags));
-            }
+            
             Some(LitexGuard {
                 mutex: self,
                 saved_if: (rflags & (1 << 9)) != 0,
             })
         } else {
+            unsafe {
+                if (rflags & (1 << 9)) != 0 {
+                    asm!("sti", options(nomem, nostack, preserves_flags));
+                }
+            }
             None
         }
     }
@@ -235,7 +241,7 @@ impl<T> core::ops::Deref for LitexGuard<'_, T> {
     /// # Safety
     /// The lock is held and interrupts are disabled, so the data is safe to read.
     fn deref(&self) -> &T {
-        unsafe { &mut *self.mutex.data.get() }
+        unsafe { &*self.mutex.data.get() }
     }
 }
 

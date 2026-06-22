@@ -58,8 +58,8 @@
 //!
 //! ## Implementation Details
 //!
-//! The lock state is stored in an `AtomicUsize`:
-//! - **Writer bit**: The most significant bit (`1 << (usize::BITS - 1)`).
+//! The lock state is stored in an `AtomicU64`:
+//! - **Writer bit**: The most significant bit (`1 << (u64::BITS - 1)`).
 //!   When set, the lock is write‑locked.
 //! - **Reader count**: The lower bits (excluding the writer bit) store the
 //!   number of active readers.
@@ -89,7 +89,7 @@
 
 use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, Ordering},
     hint,
 };
 
@@ -98,8 +98,8 @@ use core::{
 // ============================================================================
 
 /// The bit used to indicate that the lock is write‑locked.
-/// This is the most significant bit of a `usize`.
-const WRITER_BIT: usize = 1 << (usize::BITS - 1);
+/// This is the most significant bit of a `u64`.
+const WRITER_BIT: u64 = 1 << (u64::BITS - 1);
 
 // ============================================================================
 // RWLOCK STRUCTURE
@@ -127,7 +127,7 @@ const WRITER_BIT: usize = 1 << (usize::BITS - 1);
 /// }
 /// ```
 pub struct RwLock<T> {
-    state: AtomicUsize,
+    state: AtomicU64,
     data: UnsafeCell<T>,
 }
 
@@ -142,7 +142,7 @@ impl<T> RwLock<T> {
     /// * `t` – The initial value to protect.
     pub const fn new(t: T) -> Self {
         Self {
-            state: AtomicUsize::new(0),
+            state: AtomicU64::new(0),
             data: UnsafeCell::new(t),
         }
     }

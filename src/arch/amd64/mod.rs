@@ -82,7 +82,6 @@ pub mod syscall;  // System call entry point
 use core::arch::x86_64;
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-pub use syscall::init as init_syscall;
 
 // ============================================================================
 // MSR CONSTANTS
