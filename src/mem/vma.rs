@@ -200,14 +200,13 @@ impl VmaTree {
                 let mut gp = p.as_ref().parent.unwrap();
                 if p.as_ref() == gp.as_ref().left.unwrap().as_ref() {
                     let y = gp.as_ref().right;
-                    if let Some(mut y_node) = y {
-                        if y_node.as_ref().color == Color::Red {
-                            p.as_mut().color = Color::Black;
-                            y_node.as_mut().color = Color::Black;
-                            gp.as_mut().color = Color::Red;
-                            z = gp;
-                            continue;
-                        }
+                    if let Some(mut y_node) = y
+                    && y_node.as_ref().color == Color::Red {
+                        p.as_mut().color = Color::Black;
+                        y_node.as_mut().color = Color::Black;
+                        gp.as_mut().color = Color::Red;
+                        z = gp;
+                        continue;
                     }
                     if z == p.as_ref().right.expect("UB") {
                         z = p;
@@ -220,14 +219,13 @@ impl VmaTree {
                     self.rotate_right(gp);
                 } else {
                     let y = gp.as_ref().left;
-                    if let Some(mut y_node) = y {
-                        if y_node.as_ref().color == Color::Red {
-                            p.as_mut().color = Color::Black;
-                            y_node.as_mut().color = Color::Black;
-                            gp.as_mut().color = Color::Red;
-                            z = gp;
-                            continue;
-                        }
+                    if let Some(mut y_node) = y
+                    && y_node.as_ref().color == Color::Red {
+                        p.as_mut().color = Color::Black;
+                        y_node.as_mut().color = Color::Black;
+                        gp.as_mut().color = Color::Red;
+                        z = gp;
+                        continue;
                     }
                     if z == p.as_ref().left.expect("UB") {
                         z = p;
@@ -281,16 +279,15 @@ impl VmaTree {
             }
         }
 
-        let mut curr = x.or_else(|| unsafe { y.as_ref().parent });
+        let mut curr = x.or(unsafe { y.as_ref().parent });
         while let Some(mut node) = curr {
             update_augmentation(&mut node);
             curr = unsafe { node.as_ref().parent };
         }
 
-        if y_original_color == Color::Black {
-            if let Some(x_node) = x {
-                self.remove_fixup(x_node);
-            }
+        if y_original_color == Color::Black
+        && let Some(x_node) = x {
+            self.remove_fixup(x_node);
         }
     }
 
@@ -318,8 +315,8 @@ impl VmaTree {
                 };
             }
 
-            let left_black = unsafe { w.as_ref().left.map_or(true, |n| n.as_ref().color == Color::Black) };
-            let right_black = unsafe { w.as_ref().right.map_or(true, |n| n.as_ref().color == Color::Black) };
+            let left_black = unsafe { w.as_ref().left.is_none_or(|n| n.as_ref().color == Color::Black) };
+            let right_black = unsafe { w.as_ref().right.is_none_or(|n| n.as_ref().color == Color::Black) };
 
             if left_black && right_black {
                 unsafe { w.as_mut().color = Color::Red };
@@ -398,11 +395,10 @@ impl VmaTree {
             if addr >= n.start && addr < n.end {
                 return Some(node);
             }
-            if let Some(left) = n.left {
-                if unsafe { left.as_ref().subtree_max_end } > addr {
-                    curr = n.left;
-                    continue;
-                }
+            if let Some(left) = n.left
+            && unsafe { left.as_ref().subtree_max_end } > addr {
+                curr = n.left;
+                continue;
             }
             curr = n.right;
         }
@@ -414,12 +410,11 @@ impl VmaTree {
             return None;
         }
 
-        if let Some(root) = self.root {
-            if unsafe { root.as_ref().subtree_max_gap } < size {
-                let last_end = unsafe { root.as_ref().subtree_max_end };
-                if MAX_CANONICAL_ADDR.saturating_sub(last_end) < size {
-                    return None;
-                }
+        if let Some(root) = self.root
+        && unsafe { root.as_ref().subtree_max_gap } < size {
+            let last_end = unsafe { root.as_ref().subtree_max_end };
+            if MAX_CANONICAL_ADDR.saturating_sub(last_end) < size {
+                return None;
             }
         }
 
@@ -518,9 +513,7 @@ impl Vmm {
         let mut guard = self.tree.lock();
         let tree = &mut *guard;
 
-        let target_hint = if flags.contains(VmaFlags::FIXED) {
-            hint
-        } else if hint != 0 {
+        let target_hint = if flags.contains(VmaFlags::FIXED) || hint != 0 {
             hint
         } else {
             tree.cached_hint

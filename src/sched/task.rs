@@ -33,7 +33,7 @@ impl Priority {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Task {
     pub id: TaskId,
     pub state: TaskState,
@@ -133,7 +133,7 @@ impl Task {pub fn new_user(
             *(initial_rsp as *mut u64) = 0; 
         }
         
-        frame.rip = entry as u64;
+        frame.rip = entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
         frame.cs = 0x08;  // KERNEL_CODE_SELECTOR
         frame.ss = 0x10;  // KERNEL_DATA_SELECTOR

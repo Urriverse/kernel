@@ -14,8 +14,8 @@ const DMA32_END: usize = 4 * 1024 * 1024 * 1024; // 4 GiB
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zone {
-    DMA,
-    DMA32,
+    Dma,
+    Dma32,
     Normal,
 }
 
@@ -24,9 +24,9 @@ impl Zone {
     pub fn from_pfn(pfn: usize) -> Self {
         let paddr = pfn * 4096;
         if paddr < DMA_END {
-            Zone::DMA
+            Zone::Dma
         } else if paddr < DMA32_END {
-            Zone::DMA32
+            Zone::Dma32
         } else {
             Zone::Normal
         }
@@ -35,16 +35,16 @@ impl Zone {
     #[inline]
     pub const fn index(self) -> usize {
         match self {
-            Zone::DMA => 0,
-            Zone::DMA32 => 1,
+            Zone::Dma => 0,
+            Zone::Dma32 => 1,
             Zone::Normal => 2,
         }
     }
 
     pub const fn name(self) -> &'static str {
         match self {
-            Zone::DMA => "DMA",
-            Zone::DMA32 => "DMA32",
+            Zone::Dma => "DMA",
+            Zone::Dma32 => "DMA32",
             Zone::Normal => "Normal",
         }
     }
@@ -221,7 +221,7 @@ pub fn init() {
 
     let (ema_start, ema_end) = ema::get_allocated_range();
     let ema_start_pfn = ema_start / 4096;
-    let ema_end_pfn = (ema_end + 4095) / 4096;
+    let ema_end_pfn = ema_end.div_ceil(4096);
 
     let mut zone_boundaries = [(0usize, 0usize); 3];
 
@@ -311,7 +311,7 @@ pub fn init() {
                 let mut order = MAX_ORDER - 1;
                 while order > 0 {
                     let block_size = 1 << order;
-                    if pfn % block_size == 0 && pfn + block_size <= aligned_end {
+                    if pfn.is_multiple_of(block_size) && pfn + block_size <= aligned_end {
                         break;
                     }
                     order -= 1;

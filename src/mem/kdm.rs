@@ -155,6 +155,7 @@ impl Vaddr {
     }
 
     #[inline(always)]
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_ptr_mut<T>(self) -> *mut T {
         self.0 as *mut T
     }
@@ -167,6 +168,7 @@ impl Vaddr {
     }
 
     #[inline(always)]
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_ref_mut<'a, T>(self) -> &'a mut T {
         unsafe {
             self.to_ptr_mut::<T>().as_mut_unchecked()

@@ -12,13 +12,13 @@ impl Dev
     {
         unsafe
         {
-            x86::io::outb(0x3f8 + 1, 0);
+            x86::io::outb(0x3f8 + 1, 0  );
             x86::io::outb(0x3f8 + 3, 128);
-            x86::io::outb(0x3f8 + 0, 1);
-            x86::io::outb(0x3f8 + 1, 0);
-            x86::io::outb(0x3f8 + 3, 3);
-            x86::io::outb(0x3f8 + 2, 7);
-            x86::io::outb(0x3f8 + 4, 3);
+            x86::io::outb(0x3f8    , 1  );
+            x86::io::outb(0x3f8 + 1, 0  );
+            x86::io::outb(0x3f8 + 3, 3  );
+            x86::io::outb(0x3f8 + 2, 7  );
+            x86::io::outb(0x3f8 + 4, 3  );
             let _ = x86::io::inb(0x3f8 + 5);
         }
         Self

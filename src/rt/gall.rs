@@ -15,7 +15,7 @@ impl Gall for Fake {
             "Heap unavailable. Requested {} bytes, {}-aligned.",
             l.size(), l.align()
         );
-        0 as *mut u8
+        core::ptr::null_mut::<u8>()
     }
     fn free(&self, l: Layout, ptr: *mut u8) {
         error!(

@@ -1,3 +1,45 @@
+//! # Kernel Main Entry Point
+//!
+//! This module serves as the primary entry point for the kernel. It orchestrates
+//! the entire bootstrapping process across all CPU cores (BSP and APs) and
+//! initializes every major subsystem in the correct order.
+//!
+//! ## Boot Flow Overview
+//!
+//! 1. **BSP (Bootstrap Processor) Initialization**
+//!    - `_start()` → `main()` (via `rt/entry.rs`)
+//!    - Architecture early init (`arch::early_init_bs`)
+//!    - Start APs (`start_aps!`)
+//!    - Architecture init (`arch::init_bsp`)
+//!    - Memory init (`mem::init_bsp`)
+//!    - Architecture late init (`arch::late_init_bsp`, `arch::late_init`)
+//!    - Device init (`dev::init`)
+//!    - Scheduler init (`sched::init`)
+//!    - Spawn initial tasks (reaper, test)
+//!
+//! 2. **AP (Application Processor) Initialization**
+//!    - Each AP follows a synchronized boot sequence using `Fueue` barriers:
+//!      - `ARCH_INIT.wait()` – wait for BSP arch init
+//!      - `MEM_INIT.wait()` – wait for BSP memory init
+//!      - `LATE_INIT.wait()` – wait for BSP late init
+//!      - `DEV_INIT.wait()` – wait for device init
+//!
+//! 3. **Final State**
+//!    - All cores enter HLT loop
+//!    - Scheduler takes over for task management
+//!
+//! ## Sync Primitives Used
+//!
+//! - `fueue!` – creates `Fueue` barriers (`ARCH_INIT`, `MEM_INIT`, `LATE_INIT`, `DEV_INIT`)
+//! - `entry!` – defines the BSP/AP entry points with proper synchronization
+//!
+//! ## Safety
+//!
+//! This module contains unsafe code for:
+//! - Raw pointer manipulation for `MetaBlock` and `RootRef`
+//! - AP bootstrap via Limine SMP
+//! - Static mutable access to `SPURIOUS` PML4
+
 #![no_std]
 #![no_main]
 
@@ -8,111 +50,326 @@
 #![feature(const_destruct)]
 #![feature(const_cmp)]
 
+#![allow(unused)]
+#![allow(clippy::missing_transmute_annotations)]
+#![warn(unused_braces)]
+#![warn(unused_comparisons)]
+#![warn(unused_import_braces)]
+#![warn(unused_labels)]
+#![warn(unused_mut)]
+#![warn(unused_parens)]
+#![warn(unused_qualifications)]
+#![warn(unused_unsafe)]
+
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
+use core::ptr::addr_of;
 use alloc::string::ToString;
+use crate::{sched::current_process, vfs::{MetaBlock, PvfsMb}};
 
-use crate::sched::current_process;
+// ============================================================================
+// EXTERNAL CRATES
+// ============================================================================
 
-#[allow(unused)] #[macro_use] pub extern crate extrum;
-#[allow(unused)] #[macro_use] pub extern crate bitflags;
-#[allow(unused)] #[macro_use] pub extern crate lazy_static;
-#[allow(unused)] #[macro_use] pub extern crate alloc;
+/// Extrum – "leaky" enumerations
+#[macro_use]
+pub extern crate extrum;
 
-#[macro_use] mod macros;
-pub mod rt;
-pub mod sync;
-pub mod kmsg;
-pub mod mem;
-pub mod arch;
-pub mod dev;
-pub mod sched;
-pub mod vfs;
+/// Bitflags – for flag-based bitmask types
+#[macro_use]
+pub extern crate bitflags;
 
-limine! { pub SMPR <= MpRequest: 0 }
+/// Lazy_static – for lazy-initialized static data
+#[macro_use]
+pub extern crate lazy_static;
 
-lazy_static! {
-    static ref SMP: &'static limine::request::Response<limine::request::MpRespData> = SMPR.response().expect("Can't obtain SMP info");
-}
+/// Alloc – provides `Vec`, `Box`, `String`, etc. (the global allocator is set in `rt/gall.rs`)
+#[macro_use]
+pub extern crate alloc;
 
-fueue! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT }
+// ============================================================================
+// INTERNAL MODULES
+// ============================================================================
 
+/// Macros – logging, entry point, Limine requests, etc.
+#[macro_use]
+mod macros;
+
+/// Runtime – entry point, panic handler, global allocator
+mod rt;
+
+/// Synchronization primitives (mutexes, rwlocks, barriers, etc.)
+mod sync;
+
+/// Kernel message logging system
+mod kmsg;
+
+/// Memory management (allocators, paging, physical memory regions, etc.)
+mod mem;
+
+/// Architecture-specific code (x86_64: GDT, IDT, paging, ACPI, syscalls, etc.)
+mod arch;
+
+/// Device model (driver framework, device registration, method calls)
+#[allow(unused)] mod dev;
+
+/// Scheduler (EEVDF-based task scheduler, processes, runqueues)
+mod sched;
+
+/// Virtual File System (VFS) – inodes, mount points, file operations
+mod vfs;
+
+// ============================================================================
+// SYNCHRONIZATION BARRIERS
+// ============================================================================
+
+// Barriers for coordinating multi-core initialization.
+//
+// Each barrier is a simple flag that is initially closed. BSP opens them
+// sequentially as each subsystem becomes ready, and APs block on each
+// barrier before proceeding.
+//
+// - `ARCH_INIT` – architecture initialization complete
+// - `MEM_INIT`  – memory management initialized
+// - `LATE_INIT` – late architecture init
+// - `DEV_INIT`  – device model initialized
+barrier! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT }
+
+// ============================================================================
+// KERNEL ENTRY POINT (BSP + AP)
+// ============================================================================
+
+// Main entry point – defines both BSP and AP entry functions.
+//
+// ## BSP Flow (core 0)
+// 1. Early architecture init (paging, CPUID, percpu)
+// 2. Start all APs via Limine (`start_aps!`)
+// 3. Complete architecture init (GDT, IDT, syscall)
+// 4. Initialize memory management (EMA, PFM, KDM, UPA, SOA, PTM)
+// 5. Late architecture init (ACPI, HPET, APIC, timer, interrupts)
+// 6. Device model init
+// 7. Scheduler init
+// 8. Spawn `reaper` (zombie reaper) and `test` (VFS test) tasks
+//
+// ## AP Flow (all other cores)
+// 1. Early architecture init (CPUID, percpu)
+// 2. Block on `ARCH_INIT` → wait for BSP arch init
+// 3. Complete AP architecture init (GDT, IDT)
+// 4. Block on `MEM_INIT` → wait for BSP memory init
+// 5. Activate shared page table
+// 6. Block on `LATE_INIT` → wait for BSP late init
+// 7. Block on `DEV_INIT` → wait for device init
+// 8. Join scheduler (HLT loop)
 entry! {
     for BSP {
+        // --------------------------------------------------------------------
+        // PHASE 1: Architecture Early Initialization (BSP)
+        // --------------------------------------------------------------------
         arch::early_init_bs();
 
+        // Start all APs (each AP will execute `for AP` block)
         start_aps!();
 
+        // --------------------------------------------------------------------
+        // PHASE 2: Architecture Full Initialization (BSP)
+        // --------------------------------------------------------------------
         arch::init_bsp();
 
+        // Signal that architecture init is complete -> APs can proceed
         ARCH_INIT.open();
 
+        // --------------------------------------------------------------------
+        // PHASE 3: Memory Management Initialization (BSP)
+        // --------------------------------------------------------------------
         mem::init_bsp();
 
+        // Signal that memory init is complete -> APs can proceed
         MEM_INIT.open();
 
+        // --------------------------------------------------------------------
+        // PHASE 4: Late Architecture Initialization (BSP)
+        // --------------------------------------------------------------------
         arch::late_init_bsp();
-
         arch::late_init();
 
+        // Signal that late init is complete -> APs can proceed
         LATE_INIT.open();
 
+        // --------------------------------------------------------------------
+        // PHASE 5: Device Model Initialization (BSP)
+        // --------------------------------------------------------------------
         dev::init();
 
+        // Signal that device init is complete -> APs can proceed
         DEV_INIT.open();
 
-        let ticks_per_10ms = crate::arch::timer::get_ticks_per_10ms();
-        crate::sched::init(ticks_per_10ms);
+        // --------------------------------------------------------------------
+        // PHASE 6: Scheduler Initialization (BSP)
+        // --------------------------------------------------------------------
+        let ticks_per_10ms = arch::timer::get_ticks_per_10ms();
+        sched::init(ticks_per_10ms);
 
-        crate::sched::spawn_kernel_task(reaper, crate::sched::task::Priority(-1), "reaper", Some(vfs::RootRef::new(vfs::RootReg::new())));
-        crate::sched::spawn_kernel_task(test, crate::sched::task::Priority(0), "test", Some(vfs::RootRef::new(vfs::RootReg::new())));
+        // --------------------------------------------------------------------
+        // PHASE 7: Spawn Initial Kernel Tasks (BSP)
+        // --------------------------------------------------------------------
 
-        // sched::exit(0);
+        // Spawn the reaper task – reaps zombie processes
+        let _ = sched::spawn_kernel_task(
+            reaper,
+            sched::task::Priority(-1),
+            "reaper",
+            Some(
+                vfs::RootRef::new(
+                    vfs::RootReg::new()
+                )
+            )
+        );
+
+        // Spawn the VFS test task – validates the VFS implementation
+        let _ = sched::spawn_kernel_task(
+            vfs_test,
+            sched::task::Priority(0),
+            "test",
+            Some(
+                vfs::RootRef::new(
+                    vfs::RootReg::new()
+                )
+            )
+        );
     }
 
     for AP {
+        // --------------------------------------------------------------------
+        // AP INITIALIZATION
+        // --------------------------------------------------------------------
+
+        // Early AP init (CPUID, percpu, etc.)
         arch::early_init();
 
+        // Wait for BSP to complete architecture init
         ARCH_INIT.wait();
 
+        // Full AP init (GDT, IDT, etc.)
         arch::init_ap();
 
+        // Wait for BSP to complete memory init
         MEM_INIT.wait();
 
+        // AP memory init (activate shared page table)
         mem::init_ap();
 
+        // Wait for BSP to complete late init
         LATE_INIT.wait();
 
+        // AP late init (ACPI, etc.)
         arch::late_init();
 
+        // Wait for BSP to complete device init
         DEV_INIT.wait();
-
-        // sched::exit(0);
     }
 }
 
-fn test() {
+// ============================================================================
+// LAZY-STATIC VFS TEST STRUCTURES
+// ============================================================================
+
+lazy_static! {
+    /// Purely virtual filesystem instance for testing.
+    ///
+    /// `PvfsMb` is an in-memory filesystem that doesn't require a block device.
+    /// It's used to test VFS operations early in the boot process.
+    static ref MBINST: PvfsMb = PvfsMb::new();
+
+    /// Static reference to a `MetaBlock` used for the test filesystem.
+    ///
+    /// This is a globally accessible mount block that provides VFS operations
+    /// via the `PVFS_VTABLE` function table.
+    static ref TESTFSMBLK0: &'static MetaBlock
+    =   vfs::get_mblk(
+        vfs::reg_mblk(
+            vfs::new_mblock(
+                0, &vfs::PVFS_VTABLE,
+                unsafe {
+                    (
+                        addr_of!(*MBINST) as *mut ()
+                    ).as_mut_unchecked()
+                }
+            )
+        )
+    ).unwrap();
+}
+
+// ============================================================================
+// KERNEL TASKS
+// ============================================================================
+
+/// VFS test task – validates in-memory filesystem operations.
+///
+/// This task:
+/// 1. Retrieves the current process's root registry
+/// 2. Creates a new root mount point named "pv" for the test FS
+/// 3. Creates a new file in the test FS
+/// 4. Writes a marker string to the file
+/// 5. Reads back the data and logs it
+/// 6. Exits with code 0
+///
+/// # Panics
+/// Panics if any VFS operation fails, which would indicate a VFS regression.
+fn vfs_test() {
+    // Get the current process's root registry
     let roots = current_process().expect("NOPID").roots.clone();
     debug!("Got roots");
-    let inode = vfs::Inode::new();
-    inode.vtable = &vfs::PVFS_VTABLE;
+
+    // Create a new inode and attach it to the test filesystem
+    let mut inode = vfs::Inode::new();
+    inode.mblock = &TESTFSMBLK0;
     debug!("Inode created");
-    if let Err(e) = roots.add_new_root("pv".to_string(), inode.id) { panic!("{:?}", e); }
+
+    // Register a new root mount point named "pv"
+    if let Err(e) = roots.add_new_root("pv".to_string(), inode.id) {
+        panic!("{:?}", e);
+    }
     debug!("Root created");
-    if let Err(e) = (inode.vtable.new)(inode, vfs::Kind::File) { panic!("{:?}", e); }
+
+    // Create a file in the test filesystem
+    let iid = match vfs::new(&TESTFSMBLK0, inode, vfs::Kind::File) {
+        Ok(i) => i,
+        Err(e) => panic!("{:?}", e),
+    };
     debug!("File created");
-    if let Err(e) = (inode.vtable.write)(inode, 0, &[b'[', b'N', b'O', b'T', b' ', b'F', b'A', b'I', b'L', b'E', b'D', b']']) { panic!("{:?}", e); }
+
+    // Write test data to the file
+    if let Err(e) = vfs::write(&iid, 0, b"[NOT FAILED]") {
+        panic!("E: {:?}", e)
+    }
     debug!("File written");
-    let mut buf: &mut [u8] = &mut [b'[', b'F', b'A', b'I', b'L', b'E', b'D', b']', b' ', b' ', b' ', b' '];
-    if let Err(e) = (inode.vtable.read)(inode, 0, &mut buf) { panic!("{:?}", e); }
-    debug!("vfs test: {}", str::from_utf8(buf).unwrap());
+
+    // Read back the data
+    let mut buf: [u8; 12] = *b"[FAILED]    ";
+    if let Err(e) = vfs::read(&iid, 0, &mut buf) {
+        panic!("E: {:?}", e)
+    }
+    debug!("vfs test: {}", str::from_utf8(&buf).unwrap());
+
+    // Exit cleanly
     sched::exit(0);
 }
 
+/// Zombie reaper task – reaps terminated child processes.
+///
+/// This task runs in an infinite loop, waiting for any child process to exit.
+/// When a child exits (becomes a zombie), it:
+/// 1. Logs the exit event
+/// 2. Collects the exit code
+/// 3. Removes the zombie from the task registry
+///
+/// # Note
+/// This is a kernel task and never exits; it runs forever to ensure no
+/// zombies accumulate.
 fn reaper() {
     loop {
         crate::info!("waiting for any child to exit...");
-        if let Some((id, code)) = crate::sched::wait_any() {
+        if let Some((id, code)) = sched::wait_any() {
             crate::info!("reaped zombie task {:?}, exit code: {}", id, code);
         }
     }

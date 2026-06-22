@@ -182,12 +182,11 @@ impl Polen {
                 match ps {
                     PageSize::Size1G => {
                         if step == ps_bytes {
-                            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, mid_vaddr, 2, false) {
-                                if entry.is_present() && is_huge(entry) {
-                                    debug!("  split 1G (blocking 1G map)");
-                                    split_and_retry(self, mid_vaddr, ps)?;
-                                    continue;
-                                }
+                            if let Ok(entry) = walk_entry_mut(self.exco.root, mid_vaddr, 2, false)
+                            && entry.is_present() && is_huge(entry) {
+                                debug!("  split 1G (blocking 1G map)");
+                                split_and_retry(self, mid_vaddr, ps)?;
+                                continue;
                             }
                             self.exco.try_map1g(mid_vaddr, mid_paddr, flags)?;
                             mid_vaddr += step;
@@ -198,12 +197,11 @@ impl Polen {
                     }
                     PageSize::Size2M => {
                         if step == ps_bytes {
-                            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, mid_vaddr, 1, false) {
-                                if entry.is_present() && is_huge(entry) {
-                                    debug!("  split 2M (blocking 2M map)");
-                                    split_and_retry(self, mid_vaddr, ps)?;
-                                    continue;
-                                }
+                            if let Ok(entry) = walk_entry_mut(self.exco.root, mid_vaddr, 1, false)
+                            && entry.is_present() && is_huge(entry) {
+                                debug!("  split 2M (blocking 2M map)");
+                                split_and_retry(self, mid_vaddr, ps)?;
+                                continue;
                             }
                             self.exco.try_map2m(mid_vaddr, mid_paddr, flags)?;
                             mid_vaddr += step;
@@ -256,11 +254,11 @@ impl Polen {
             match self.exco.try_map4k(vaddr, paddr, flags) {
                 Ok(_) => return Ok(()),
                 Err(_) => {
-                    if let Ok(_entry) = walk_entry_mut(&mut self.exco.root, vaddr, 1, false) {
+                    if let Ok(_entry) = walk_entry_mut(self.exco.root, vaddr, 1, false) {
                         let base = vaddr & !(0x1f_ffff);
                         debug!("  map_4k_block: split 2M at {:#X}", base);
                         self.exco.try_split2m(base)?;
-                    } else if let Ok(_entry) = walk_entry_mut(&mut self.exco.root, vaddr, 2, false) {
+                    } else if let Ok(_entry) = walk_entry_mut(self.exco.root, vaddr, 2, false) {
                         let base = vaddr & !(0x3fff_ffff);
                         debug!("  map_4k_block: split 1G at {:#X}", base);
                         self.exco.try_split1g(base)?;
@@ -290,24 +288,22 @@ impl Polen {
         debug!("Polen::remap [ {:#X} .. {:#X} ) -> flags {:?}", vaddr, vaddr + size, new_flags);
 
         while size > 0 {
-            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, vaddr, 2, false) {
-                if entry.is_present() && is_huge(entry) {
-                    let base = vaddr & !(0x3fff_ffff);
-                    debug!("  remap: split 1G at {:#X}", base);
-                    self.exco.try_split1g(base)?;
-                    continue;
-                }
+            if let Ok(entry) = walk_entry_mut(self.exco.root, vaddr, 2, false)
+            && entry.is_present() && is_huge(entry) {
+                let base = vaddr & !(0x3fff_ffff);
+                debug!("  remap: split 1G at {:#X}", base);
+                self.exco.try_split1g(base)?;
+                continue;
             }
-            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, vaddr, 1, false) {
-                if entry.is_present() && is_huge(entry) {
-                    let base = vaddr & !(0x1f_ffff);
-                    debug!("  remap: split 2M at {:#X}", base);
-                    self.exco.try_split2m(base)?;
-                    continue;
-                }
+            if let Ok(entry) = walk_entry_mut(self.exco.root, vaddr, 1, false)
+            && entry.is_present() && is_huge(entry) {
+                let base = vaddr & !(0x1f_ffff);
+                debug!("  remap: split 2M at {:#X}", base);
+                self.exco.try_split2m(base)?;
+                continue;
             }
 
-            let entry = walk_entry_mut(&mut self.exco.root, vaddr, 0, false)?;
+            let entry = walk_entry_mut(self.exco.root, vaddr, 0, false)?;
             if !entry.is_present() {
                 return Err("address not mapped");
             }
@@ -338,24 +334,22 @@ impl Polen {
         info!("Polen::unmap [ {:#X} .. {:#X} ) ({} bytes)", vaddr, vaddr + size, size);
 
         while size > 0 {
-            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, vaddr, 2, false) {
-                if entry.is_present() && is_huge(entry) {
-                    let base = vaddr & !(0x3fff_ffff);
-                    if base != vaddr || size < (1 << 30) {
-                        debug!("  unmap: partial split 1G at {:#X}", base);
-                        self.exco.try_split1g(base)?;
-                        continue;
-                    }
+            if let Ok(entry) = walk_entry_mut(self.exco.root, vaddr, 2, false)
+            && entry.is_present() && is_huge(entry) {
+                let base = vaddr & !(0x3fff_ffff);
+                if base != vaddr || size < (1 << 30) {
+                    debug!("  unmap: partial split 1G at {:#X}", base);
+                    self.exco.try_split1g(base)?;
+                    continue;
                 }
             }
-            if let Ok(entry) = walk_entry_mut(&mut self.exco.root, vaddr, 1, false) {
-                if entry.is_present() && is_huge(entry) {
-                    let base = vaddr & !(0x1f_ffff);
-                    if base != vaddr || size < (2 << 20) {
-                        debug!("  unmap: partial split 2M at {:#X}", base);
-                        self.exco.try_split2m(base)?;
-                        continue;
-                    }
+            if let Ok(entry) = walk_entry_mut(self.exco.root, vaddr, 1, false)
+            && entry.is_present() && is_huge(entry) {
+                let base = vaddr & !(0x1f_ffff);
+                if base != vaddr || size < (2 << 20) {
+                    debug!("  unmap: partial split 2M at {:#X}", base);
+                    self.exco.try_split2m(base)?;
+                    continue;
                 }
             }
 
@@ -404,31 +398,28 @@ impl Polen {
     pub fn query(&self, vaddr: usize) -> Option<(Paddr, EntryFlags)> {
         trace!("Polen::query {:#X}", vaddr);
 
-        if let Ok(entry) = walk_entry(&self.exco.root, vaddr, 0) {
-            if entry.is_present() {
-                let offset = vaddr & 0xfff;
-                let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
-                trace!("  -> 4K page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
-                return Some((paddr, entry.flags()));
-            }
+        if let Ok(entry) = walk_entry(self.exco.root, vaddr, 0)
+        && entry.is_present() {
+            let offset = vaddr & 0xfff;
+            let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
+            trace!("  -> 4K page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
+            return Some((paddr, entry.flags()));
         }
 
-        if let Ok(entry) = walk_entry(&self.exco.root, vaddr, 1) {
-            if entry.is_present() && is_huge(entry) {
-                let offset = vaddr & 0x1f_ffff;
-                let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
-                trace!("  -> 2M page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
-                return Some((paddr, entry.flags()));
-            }
+        if let Ok(entry) = walk_entry(self.exco.root, vaddr, 1)
+        && entry.is_present() && is_huge(entry) {
+            let offset = vaddr & 0x1f_ffff;
+            let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
+            trace!("  -> 2M page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
+            return Some((paddr, entry.flags()));
         }
 
-        if let Ok(entry) = walk_entry(&self.exco.root, vaddr, 2) {
-            if entry.is_present() && is_huge(entry) {
-                let offset = vaddr & 0x3fff_ffff;
-                let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
-                trace!("  -> 1G page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
-                return Some((paddr, entry.flags()));
-            }
+        if let Ok(entry) = walk_entry(self.exco.root, vaddr, 2)
+        && entry.is_present() && is_huge(entry) {
+            let offset = vaddr & 0x3fff_ffff;
+            let paddr = Paddr::from_raw(entry.address().to_raw() + offset);
+            trace!("  -> 1G page: phys {:#016X} flags {:?}", paddr.to_raw(), entry.flags());
+            return Some((paddr, entry.flags()));
         }
 
         trace!("  -> not mapped");

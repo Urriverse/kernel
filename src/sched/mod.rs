@@ -1,7 +1,96 @@
-pub mod task;
-pub mod rq;
-pub mod wq;
-pub mod proc;
+//! # Scheduler Subsystem (EEVDF)
+//!
+//! This module implements the kernel scheduler based on the **Earliest Eligible Virtual Deadline First (EEVDF)** algorithm.
+//! It manages task execution, preemption, and CPU time distribution across all cores.
+//!
+//! ## Overview
+//!
+//! The scheduler is responsible for:
+//!
+//! - **Task Management**: Creating, running, blocking, and terminating tasks.
+//! - **CPU Scheduling**: Selecting the next task to run on each CPU using the EEVDF policy.
+//! - **Synchronization**: Providing primitives for waiting and waking tasks.
+//! - **Process Support**: Managing process IDs, address spaces, and system call handling.
+//!
+//! ## Key Concepts
+//!
+//! - **Task**: A schedulable unit of execution, either kernel or user mode. Each task has a
+//!   `TaskId`, priority (`Priority`), weight, virtual runtime (`vruntime`), and deadline.
+//! - **EEVDF**: Tasks are scheduled based on a virtual deadline. Each task gets a time slice
+//!   (`slice`) and is assigned a deadline = `vruntime + slice`. The scheduler picks the task
+//!   with the earliest deadline that is eligible (`vruntime <= min_vruntime`).
+//! - **Runqueue**: Per-CPU queue of runnable tasks, organized by deadline in a `BTreeSet`.
+//!   Each runqueue also tracks the current task and the minimum vruntime.
+//! - **Process**: A container for tasks, address space, VMAs, and syscall handler.
+//!   Each task belongs to a process (`Arc<Process>`).
+//! - **WaitQueue**: A list of tasks waiting for an event; used for `sleep`/`wakeup`.
+//! - **Zombie Reaping**: Tasks that exit become zombies and are reaped by the `reaper` task.
+//!
+//! ## Scheduling Algorithm (EEVDF)
+//!
+//! 1. Each task has a `vruntime` (accumulated virtual runtime) and a `slice` (time quota).
+//! 2. When scheduled, the task runs until its `vruntime` reaches its `deadline` (`deadline = vruntime + slice`).
+//! 3. The task with the smallest `deadline` among runnable tasks is selected (Earliest Deadline First).
+//! 4. To prevent starvation, the runqueue maintains a `min_vruntime`; tasks with `vruntime` below it are
+//!    considered eligible and get priority.
+//! 5. On each timer tick (10 ms), the current task's `vruntime` is updated by:
+//!    `delta_vruntime = delta_real_time * (NICE_0_WEIGHT / weight)`
+//!    (where weight depends on priority, and `NICE_0_WEIGHT = 1024`).
+//! 6. If the task's `vruntime >= deadline`, a new deadline is computed: `deadline = vruntime + slice`.
+//!
+//! ## CPU Affinity
+//!
+//! Each task can specify a preferred CPU (`cpu_affinity`). If `None`, it can run on any core.
+//! The scheduler respects affinity when selecting a runqueue.
+//!
+//! ## Synchronization Primitives
+//!
+//! - **`sleep(wq)`**: Moves the current task to a wait queue and yields the CPU.
+//! - **`wakeup(wq)`**: Wakes up one task from the wait queue, making it runnable.
+//! - **`wait_child(id)`**: Waits for a specific child task to exit.
+//! - **`wait_any()`**: Waits for any child task to exit.
+//!
+//! ## System Calls (Native ABI)
+//!
+//! - **sys_yield** (0): Yield the CPU voluntarily.
+//! - **sys_exit** (1): Exit the current process with a code.
+//!
+//! ## Page Fault Handling
+//!
+//! The scheduler handles page faults via `handle_page_fault`:
+//! - **Copy-on-Write (CoW)**: If a write fault occurs on a page with `COPY_ON_WRITE` flag,
+//!   a private copy is created.
+//! - **Demand Paging**: If the fault address falls within a VMA, a new physical page is allocated
+//!   and mapped with appropriate permissions.
+//! - **Segmentation Fault**: If the fault cannot be resolved, the process is terminated with SIGSEGV.
+//!
+//! ## Initialization
+//!
+//! `sched::init(ticks_per_10ms)` is called by the BSP after all subsystems are ready.
+//! It initializes the per-CPU runqueues, creates an idle task for each CPU, and sets up
+//! the current task. The scheduler is then ready to run.
+//!
+//! ## Safety
+//!
+//! - The runqueues are protected by `Nitex` (interrupt‑disabling spinlocks) to ensure
+//!   safe concurrent access from multiple CPUs.
+//! - Task registry (`TASK_REGISTRY`) is protected by a `Nutex` (also interrupt‑disabling).
+//! - The scheduler uses inline assembly for context switching and interrupt handling.
+//! - The `yield_wrapper` and `timer_wrapper` are naked functions that manipulate the stack
+//!   and trap frames directly.
+
+// ============================================================================
+// SUBMODULES
+// ============================================================================
+
+pub mod task;   // Task structure, TaskId, Priority, Context
+pub mod rq;     // Runqueue (per-CPU), EEVDF logic
+pub mod wq;     // WaitQueue for task sleeping
+pub mod proc;   // Process structure, address space, VMM, root FS
+
+// ============================================================================
+// IMPORTS
+// ============================================================================
 
 use crate::arch::trap::TrapFrame;
 use crate::mem::vma::VmaFlags;
@@ -17,29 +106,62 @@ use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 use crate::arch::paging::EntryFlags;
 
+// ============================================================================
+// GLOBAL STATE
+// ============================================================================
+
+/// Global registry of all tasks (including zombies).
+///
+/// This map is used to look up tasks by ID, re-parent orphans, and reap zombies.
 pub static TASK_REGISTRY: Nutex<BTreeMap<TaskId, Box<Task>>> = Nutex::new(BTreeMap::new());
+
+/// Wait queue for tasks waiting for any child to exit.
 pub static EXIT_WQ: Nutex<WaitQueue> = Nutex::new(WaitQueue::new());
 
+/// Ticks per millisecond (derived from HPET calibration).
 static TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
 
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+/// Initializes the scheduler.
+///
+/// # Arguments
+/// * `ticks_per_10ms` – Number of APIC timer ticks per 10 ms (calibrated in `timer::init`).
+///
+/// # Operations
+/// 1. Stores `ticks_per_10ms / 10` as ticks per ms.
+/// 2. For each CPU, allocates a kernel stack and creates an idle task.
+/// 3. Inserts the idle task into the CPU's runqueue and sets it as current.
+/// 4. Sets the kernel stack for the BSP's per‑CPU data.
+///
+/// # Panics
+/// If stack allocation fails (should not happen).
 pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
-    for cpu in 0..crate::arch::num_cpus() {
+
+    for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
         let stack = allocate_kernel_stack(16 * 1024);
         let idle = Task::new_kernel(idle_task, stack, Priority(19), "idle");
         let mut rq = RUNQUEUES[cpu].lock();
         rq.set_current(idle.id);
         rq.insert(idle);
 
+        // Set kernel stack for the BSP (CPU 0) – other CPUs will set it when they start.
         if cpu == crate::arch::current_cpu() {
             crate::arch::percpu::set_kernel_stack(stack as u64);
         }
     }
+
     crate::info!("Scheduler initialized with EEVDF");
 }
 
+/// Allocates a kernel stack of the given size.
+///
+/// Returns the top address of the stack (the stack grows downward).
 fn allocate_kernel_stack(size: usize) -> usize {
-    let pages = (size + 4095) / 4096;
+    let pages = size.div_ceil(4096);
     let paddr = crate::mem::upa::alloc(pages);
     if paddr.to_raw() == 0 {
         panic!("Failed to allocate kernel stack");
@@ -47,12 +169,35 @@ fn allocate_kernel_stack(size: usize) -> usize {
     paddr.to_virt().to_raw() + size
 }
 
+/// Idle task – runs when no other task is runnable.
+///
+/// It simply halts the CPU, waiting for interrupts.
 fn idle_task() {
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
 }
 
+// ============================================================================
+// TASK SPAWNING
+// ============================================================================
+
+/// Spawns a new kernel task.
+///
+/// # Arguments
+/// * `entry` – The function to run (must never return, or call `exit`).
+/// * `priority` – The priority (niceness) of the task.
+/// * `name` – Static name for debugging.
+/// * `root` – Optional `RootRef` (VFS root) for the process.
+///
+/// # Returns
+/// The `TaskId` of the newly spawned task.
+///
+/// # Notes
+/// - The task's process is cloned from the current process (if any) or a default
+///   process. The `root` is set if provided.
+/// - The task is inserted into the runqueue of the current CPU.
+/// - The parent is set to the current task.
 pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str, root: Option<RootRef>) -> TaskId {
     let stack = allocate_kernel_stack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
@@ -67,19 +212,33 @@ pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str, ro
         proc.roots = x;
         task.process = Arc::new(proc);
     }
-    
+
     let cpu = crate::arch::current_cpu();
     let rq = RUNQUEUES[cpu].lock();
     task.parent = rq.current_task_id();
     drop(rq);
-    
+
     let id = task.id;
     RUNQUEUES[cpu].lock().insert(task);
     id
 }
 
-pub fn exit(code: i32) -> ! {
+// ============================================================================
+// TASK EXIT & WAITING
+// ============================================================================
 
+/// Terminates the current task with the given exit code.
+///
+/// This function:
+/// 1. Removes the task from its CPU's runqueue.
+/// 2. Re‑parents any children to the init task (TaskId(1)).
+/// 3. Marks the task as `Zombie` and stores it in the global task registry.
+/// 4. Wakes up any waiters (via `EXIT_WQ`).
+/// 5. Yields the CPU (never returns).
+///
+/// # Note
+/// The function never returns; it yields and eventually the task is reaped.
+pub fn exit(code: i32) -> ! {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap();
@@ -90,15 +249,15 @@ pub fn exit(code: i32) -> ! {
         current_process().unwrap_or(Arc::new(Process::default())).pid,
         code,
     );
-    
+
     let mut task = rq.remove(current_id).unwrap();
     rq.clear_current();
     drop(rq);
-    
+
     let init_id = TaskId(1);
     {
         let mut registry = TASK_REGISTRY.lock();
-        for (_, t) in registry.iter_mut() {
+        for t in registry.values_mut() {
             if t.parent == Some(current_id) {
                 t.parent = Some(init_id);
             }
@@ -107,22 +266,34 @@ pub fn exit(code: i32) -> ! {
 
     task.state = TaskState::Zombie;
     task.exit_code = code;
-    
+
     TASK_REGISTRY.lock().insert(current_id, task);
-    
+
     wakeup(&EXIT_WQ);
-    
+
     yield_now();
 
-    unreachable!();
+    loop {
+        unsafe {
+            core::arch::asm! {
+                "hlt"
+            }
+        }
+    }
 }
 
+/// Yields the CPU voluntarily (calls `int 33`).
+#[inline(always)]
 pub fn yield_now() {
     unsafe {
         core::arch::asm!("int 33");
     }
 }
 
+/// Puts the current task to sleep on a wait queue.
+///
+/// The task is removed from the runqueue and added to the wait queue.
+/// It will be woken by `wakeup` on the same wait queue.
 pub fn sleep(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
@@ -136,41 +307,57 @@ pub fn sleep(wq: &Nutex<WaitQueue>) {
     yield_now();
 }
 
+/// Wakes up one task from a wait queue.
+///
+/// The task is removed from the wait queue and made runnable.
 pub fn wakeup(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
-    
-    if let Some(task_id) = wq.lock().wakeup_one() {
-        if let Some(mut task) = rq.remove(task_id) {
-            task.state = TaskState::Runnable;
-            rq.insert(task);
-        }
+
+    if let Some(task_id) = wq.lock().wakeup_one()
+    && let Some(mut task) = rq.remove(task_id) {
+        task.state = TaskState::Runnable;
+        rq.insert(task);
     }
 }
 
+/// Waits for a specific child task to exit.
+///
+/// # Returns
+/// The exit code of the child.
+///
+/// # Notes
+/// This function blocks the current task until the child becomes a zombie,
+/// then removes it from the registry and returns its exit code.
 pub fn wait_child(child_id: TaskId) -> i32 {
     loop {
         let mut registry = TASK_REGISTRY.lock();
-        if let Some(task) = registry.get(&child_id) {
-            if task.state == TaskState::Zombie {
-                let code = task.exit_code;
-                registry.remove(&child_id);
-                return code;
-            }
+        if let Some(task) = registry.get(&child_id)
+        && task.state == TaskState::Zombie {
+            let code = task.exit_code;
+            registry.remove(&child_id);
+            return code;
         }
         drop(registry);
         sleep(&EXIT_WQ);
     }
 }
 
+/// Waits for any child task to exit.
+///
+/// # Returns
+/// `Some((TaskId, exit_code))` if a zombie child exists, or waits indefinitely.
+///
+/// # Notes
+/// The zombie is removed from the registry before returning.
 pub fn wait_any() -> Option<(TaskId, i32)> {
     loop {
         let mut registry = TASK_REGISTRY.lock();
-        
+
         let zombie_id = registry.iter()
             .find(|(_, t)| t.state == TaskState::Zombie)
             .map(|(id, _)| *id);
-            
+
         if let Some(id) = zombie_id {
             let task = registry.remove(&id).unwrap();
             return Some((id, task.exit_code));
@@ -180,6 +367,15 @@ pub fn wait_any() -> Option<(TaskId, i32)> {
     }
 }
 
+// ============================================================================
+// SCHEDULER CORE
+// ============================================================================
+
+/// Timer tick handler – called by the APIC timer interrupt (vector 32).
+///
+/// This function:
+/// 1. Updates the system time (on BSP only).
+/// 2. Calls `reschedule` to perform scheduling decisions.
 pub fn timer_tick(frame: &mut TrapFrame) {
     if crate::arch::current_cpu() == 0 {
         crate::arch::TIME_FROM_BOOT.fetch_add(10, Ordering::Relaxed);
@@ -188,49 +384,66 @@ pub fn timer_tick(frame: &mut TrapFrame) {
     reschedule(frame);
 }
 
+/// Reschedules the current CPU.
+///
+/// This is the heart of the scheduler:
+/// 1. Sends EOI to the APIC.
+/// 2. Updates the current task's vruntime (using `rq.update_vruntime`).
+/// 3. Picks the next task (using `rq.pick_next`).
+/// 4. If the picked task is different from the current:
+///    - Saves the current task's FPU state and trap frame.
+///    - Loads the new task's FPU state and trap frame.
+///    - If the process ID changed, switches CR3 to the new address space.
+///    - Sets the current task in the runqueue.
+/// 5. If the same task continues, updates its trap frame.
+///
+/// # Arguments
+/// * `frame` – The trap frame from the interrupt (used to save/restore context).
+///
+/// # Safety
+/// This function uses inline assembly to switch CR3 and modify registers.
 pub fn reschedule(frame: &mut TrapFrame) {
     crate::arch::acpi::eoi();
 
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
-    
+
     let ticks_per_10ms = crate::arch::timer::get_ticks_per_10ms();
     rq.update_vruntime(ticks_per_10ms);
 
     let current_id = rq.current_task_id();
-    let next_id = rq.pick_next().map(|t| t);
+    let next_id = rq.pick_next();
 
     if let Some(next_id) = next_id {
         if Some(next_id) != current_id {
-            if let Some(curr_id) = current_id {
-                if let Some(old_task) = rq.tasks_mut().get_mut(&curr_id) {
-                    old_task.ctx.frame = *frame;
-                    if old_task.state == TaskState::Running {
-                        old_task.state = TaskState::Runnable;
-                    }
-                    unsafe { core::arch::x86_64::_fxsave64(old_task.ctx.fpu_state.area.as_mut_ptr()); }
+            if let Some(curr_id) = current_id
+            && let Some(old_task) = rq.tasks_mut().get_mut(&curr_id) {
+                old_task.ctx.frame = *frame;
+                if old_task.state == TaskState::Running {
+                    old_task.state = TaskState::Runnable;
                 }
+                unsafe { core::arch::x86_64::_fxsave64(old_task.ctx.fpu_state.area.as_mut_ptr()); }
             }
-            
+
             if let Some(new_task) = rq.tasks_mut().get_mut(&next_id) {
                 new_task.state = TaskState::Running;
-                *frame = new_task.ctx.frame; 
+                *frame = new_task.ctx.frame;
                 unsafe { core::arch::x86_64::_fxrstor64(new_task.ctx.fpu_state.area.as_ptr()); }
-                
+
                 let cpu = crate::arch::current_cpu();
                 crate::arch::gdt::set_kernel_stack(cpu, new_task.kernel_stack_top as u64);
                 crate::arch::percpu::set_kernel_stack(new_task.kernel_stack_top as u64);
 
                 if let Some(curr_id) = current_id {
-                    let old_pid = unsafe { RUNQUEUES[cpu].inner() } .tasks().get(&curr_id).unwrap().process.pid;
+                    let old_pid = unsafe { RUNQUEUES[cpu].inner() }.tasks().get(&curr_id).unwrap().process.pid;
                     let new_pid = new_task.process.pid;
-                    
+
                     if old_pid != new_pid {
                         let new_cr3 = new_task.process.address_space.lock().exco.cr3;
                         unsafe {
                             core::arch::asm!(
-                                "mov cr3, {}", 
-                                in(reg) new_cr3, 
+                                "mov cr3, {}",
+                                in(reg) new_cr3,
                                 options(nostack, preserves_flags)
                             );
                         }
@@ -245,15 +458,18 @@ pub fn reschedule(frame: &mut TrapFrame) {
                 rq.set_current(next_id);
             }
         } else {
-            if let Some(curr_id) = current_id {
-                if let Some(curr_task) = rq.tasks_mut().get_mut(&curr_id) {
-                    curr_task.ctx.frame = *frame;
-                }
+            if let Some(curr_id) = current_id
+            && let Some(curr_task) = rq.tasks_mut().get_mut(&curr_id) {
+                curr_task.ctx.frame = *frame;
             }
         }
     }
 }
 
+/// Naked interrupt wrapper for `yield_now` (vector 33).
+///
+/// This function is called via `int 33` and performs the same context
+/// save/restore as the timer interrupt, then calls `reschedule`.
 #[unsafe(naked)]
 pub unsafe extern "C" fn yield_wrapper() -> ! {
     naked_asm!(
@@ -290,30 +506,37 @@ pub unsafe extern "C" fn yield_wrapper() -> ! {
     );
 }
 
-pub fn current_process() -> Option<alloc::sync::Arc<proc::Process>> {
+// ============================================================================
+// PROCESS & SYSCALL SUPPORT
+// ============================================================================
+
+/// Returns the current process (if any).
+pub fn current_process() -> Option<Arc<Process>> {
     let cpu = crate::arch::current_cpu();
     let rq = RUNQUEUES[cpu].lock();
-    if let Some(id) = rq.current_task_id() {
-        if let Some(task) = rq.tasks().get(&id) {
-            return Some(task.process.clone());
-        }
+    if let Some(id) = rq.current_task_id()
+    && let Some(task) = rq.tasks().get(&id) {
+        return Some(task.process.clone());
     }
     None
 }
 
+/// Native system call handler (calls `syscall_dispatcher`).
+///
+/// This is the default syscall handler for processes.
+/// It interprets `rax` as the syscall number and `rdi`, `rsi`, `rdx` as arguments.
 pub fn native_syscall_handler(frame: &mut TrapFrame) {
-    // native ABI: RAX = syscall num, RDI, RSI, RDX = args
     match frame.rax {
         0 => {
             // sys_yield
-            crate::sched::yield_now();
+            yield_now();
             frame.rax = 0;
         }
         1 => {
             // sys_exit
             let code = frame.rdi as i32;
-            crate::info!("[Native SFD] Process {} exiting with code {}", crate::sched::current_process().unwrap().pid, code);
-            crate::sched::exit(code);
+            crate::info!("[Native SFD] Process {} exiting with code {}", current_process().unwrap().pid, code);
+            exit(code);
         }
         _ => {
             crate::warn!("[Native SFD] Unknown syscall: {}", frame.rax);
@@ -322,6 +545,9 @@ pub fn native_syscall_handler(frame: &mut TrapFrame) {
     }
 }
 
+/// Syscall dispatcher – called from the syscall entry point.
+///
+/// It retrieves the current process and delegates to its `syscall_handler`.
 pub fn syscall_dispatcher(frame: &mut TrapFrame) {
     let proc = match current_process() {
         Some(p) => p,
@@ -335,6 +561,28 @@ pub fn syscall_dispatcher(frame: &mut TrapFrame) {
     (proc.syscall_handler)(frame);
 }
 
+// ============================================================================
+// PAGE FAULT HANDLING
+// ============================================================================
+
+/// Handles page faults (from the page fault handler in IDT).
+///
+/// # Arguments
+/// * `addr` – The faulting virtual address.
+/// * `error_code` – Page fault error code (bits: present, write, user, etc.)
+/// * `rip` – Instruction pointer that caused the fault.
+/// * `_is_user` – Whether the fault occurred in user mode.
+///
+/// # Handling
+/// - **Copy‑on‑Write**: If the fault is a write to a `COPY_ON_WRITE` page,
+///   a private copy is made and the mapping is updated.
+/// - **Demand Paging**: If the address falls within a VMA that allows access,
+///   a new physical page is allocated and mapped.
+/// - **Segmentation Fault**: Otherwise, the process is terminated with exit code 139 (SIGSEGV).
+///
+/// # Panics
+/// - If the fault occurs in kernel mode (not user) and cannot be resolved.
+/// - If the current process is unknown.
 pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool) {
     let is_present = (error_code & 0x1) != 0;
     let is_write   = (error_code & 0x2) != 0;
@@ -349,33 +597,32 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
         None => panic!("Page fault in unknown context (no current process)"),
     };
 
-    // copy-on-write
+    // Copy‑on‑Write
     if is_present && is_write {
         let ptm = proc.address_space.lock();
-        if let Some((paddr, flags)) = ptm.query(addr & !0xFFF) {
-            if flags.contains(EntryFlags::COPY_ON_WRITE) {
-                drop(ptm);
+        if let Some((paddr, flags)) = ptm.query(addr & !0xFFF)
+        && flags.contains(EntryFlags::COPY_ON_WRITE) {
+            drop(ptm);
 
-                let new_paddr = crate::mem::upa::alloc(1);
-                if new_paddr.to_raw() == 0 { panic!("OOM during CoW"); }
+            let new_paddr = crate::mem::upa::alloc(1);
+            if new_paddr.to_raw() == 0 { panic!("OOM during CoW"); }
 
-                let src = paddr.to_virt().to_ptr::<u8>();
-                let dst = new_paddr.to_virt().to_ptr_mut::<u8>();
-                unsafe { core::ptr::copy_nonoverlapping(src, dst, 4096); }
+            let src = paddr.to_virt().to_ptr::<u8>();
+            let dst = new_paddr.to_virt().to_ptr_mut::<u8>();
+            unsafe { core::ptr::copy_nonoverlapping(src, dst, 4096); }
 
-                let mut ptm = proc.address_space.lock();
-                let mut new_flags = flags;
-                new_flags.remove(EntryFlags::COPY_ON_WRITE);
-                new_flags.insert(EntryFlags::WRITABLE);
-                
-                let _ = ptm.try_unmap(addr & !0xFFF, 4096);
-                ptm.map_4k_block(addr & !0xFFF, new_paddr, new_flags).unwrap();
-                return;
-            }
+            let mut ptm = proc.address_space.lock();
+            let mut new_flags = flags;
+            new_flags.remove(EntryFlags::COPY_ON_WRITE);
+            new_flags.insert(EntryFlags::WRITABLE);
+
+            let _ = ptm.try_unmap(addr & !0xFFF, 4096);
+            ptm.map_4k_block(addr & !0xFFF, new_paddr, new_flags).unwrap();
+            return;
         }
     }
 
-    // demand paging
+    // Demand paging
     if !is_present {
         let vmm = proc.vmm.lock();
         if let Some(vma) = vmm.find_overlap(addr) {
@@ -384,7 +631,7 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
             if is_write && !is_write_vma {
                 drop(vmm);
                 crate::info!("Process {} SEGFAULT: Write to Read-Only VMA at {:#X}", proc.pid, addr);
-                crate::sched::exit(139);
+                exit(139);
             }
             drop(vmm); // free the lock before allocation
 
@@ -407,7 +654,7 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
         }
     }
 
-    // segfault actually
+    // Segfault actually
     crate::info!("Process {} SEGFAULT at {:#X} (RIP: {:#X}, code: {:#X})", proc.pid, addr, rip, error_code);
-    crate::sched::exit(139);
+    exit(139);
 }

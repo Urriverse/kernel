@@ -37,7 +37,7 @@ struct SlabClass {
 
 impl SlabClass {
     const fn new(size: usize) -> Self {
-        let header_size = core::mem::size_of::<SlabHeader>();
+        let header_size = size_of::<SlabHeader>();
         let first_obj_offset = (header_size + 7) & !7;
         
         let obj_per_slab = (PAGE_SIZE - first_obj_offset) / size;
@@ -240,13 +240,12 @@ pub fn init() {
 pub fn alloc(layout: Layout) -> *mut u8 {
     let soa = unsafe { &SOA_INSTANCE };
 
-    if let Some(class_idx) = soa.find_class(layout) {
-        if let Some(ptr) = soa.classes[class_idx].alloc() {
-            return ptr.as_ptr();
-        }
+    if let Some(class_idx) = soa.find_class(layout)
+    && let Some(ptr) = soa.classes[class_idx].alloc() {
+        return ptr.as_ptr();
     }
 
-    let pages = (layout.size() + 4095) / 4096;
+    let pages = layout.size().div_ceil(4096);
     let paddr = upa::alloc(pages);
     if paddr.to_raw() == 0 {
         return core::ptr::null_mut();

@@ -14,16 +14,16 @@ fn print_stack_trace() {
     let mut frame_ptr = bp;
     let mut count = 0;
 
-    unsafe { crate::kmsg::str_log_noblock(
-        crate::kmsg::AttLvl::Error,
+    unsafe { kmsg::str_log_noblock(
+        kmsg::AttLvl::Error,
         "",
         file!(),
         line!(),
         "Stack trace:"
     ) };
 
-    unsafe { crate::kmsg::str_log_noblock(
-        crate::kmsg::AttLvl::Error,
+    unsafe { kmsg::str_log_noblock(
+        kmsg::AttLvl::Error,
         "",
         file!(),
         line!(),
@@ -35,8 +35,8 @@ fn print_stack_trace() {
 
         let mut msg = heapless::String::<32>::new();
         let _ = msg.write_fmt(format_args!("  #{:02} 0x{:016X}", count, ret_addr));
-        unsafe { crate::kmsg::str_log_noblock(
-            crate::kmsg::AttLvl::Error,
+        unsafe { kmsg::str_log_noblock(
+            kmsg::AttLvl::Error,
             "",
             file!(),
             line!(),
@@ -47,8 +47,8 @@ fn print_stack_trace() {
         count += 1;
     }
 
-    unsafe { crate::kmsg::str_log_noblock(
-        crate::kmsg::AttLvl::Error,
+    unsafe { kmsg::str_log_noblock(
+        kmsg::AttLvl::Error,
         "",
         file!(),
         line!(),
@@ -63,7 +63,7 @@ static PANIC_LOCK: Nutex<()> = Nutex::new(());
 fn panic(info: &core::panic::PanicInfo) -> ! {
     let _g1 = PANIC_LOCK.lock();
     let _g2 = kmsg::SINKS.lock();
-    let loc = info.location().unwrap().clone();
+    let loc = *info.location().unwrap();
     let line = loc.line();
     let _ = unsafe { PANIC_BUF.write_str(loc.file()) };
     let file = unsafe { PANIC_BUF.as_str() };
@@ -72,8 +72,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
     let _ = s.write_fmt(format_args!("{}", info.message()));
 
-    unsafe { crate::kmsg::str_log_noblock(
-        crate::kmsg::AttLvl::Panic,
+    unsafe { kmsg::str_log_noblock(
+        kmsg::AttLvl::Panic,
         "",
         file,
         line,
