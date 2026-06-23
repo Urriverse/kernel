@@ -125,6 +125,7 @@ impl RegOffsets {
 #[derive(Debug, Clone, Copy)]
 pub struct LocalApic;
 
+#[allow(dead_code)]  // It's full and done LAPIC interface
 impl LocalApic {
     /// Returns a handle to the Local APIC.
     ///

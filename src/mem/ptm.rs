@@ -4,6 +4,7 @@ use crate::arch::paging::{Area, Entry, EntryFlags, Exco, is_huge, tab_from_entry
 use crate::mem::kdm::Paddr;
 use crate::mem::pmr::{self, Kind};
 
+#[allow(dead_code)]
 fn is_phys_range_contiguous(paddr: Paddr, size: usize) -> bool {
     let start = paddr.to_raw();
     let end = start + size;
@@ -27,17 +28,20 @@ fn is_phys_range_contiguous(paddr: Paddr, size: usize) -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn is_phys_contiguous(paddr: Paddr, page_size: usize) -> bool {
     is_phys_range_contiguous(paddr, page_size)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum PageSize {
     Size4K,
     Size2M,
     Size1G,
 }
 
+#[allow(dead_code)]
 impl PageSize {
     fn bytes(self) -> usize {
         match self {
@@ -48,6 +52,7 @@ impl PageSize {
     }
 }
 
+#[allow(dead_code)]
 fn select_page_size(vaddr: usize, paddr: Paddr, size: usize) -> PageSize {
     let align_1g = 1_usize << 30;
     let align_2m = 2_usize << 20;
@@ -73,6 +78,7 @@ pub struct Polen {
     pub exco: Exco,
 }
 
+#[allow(dead_code)]
 impl Polen {
     pub fn new() -> Self {
         debug!("Polen::new");

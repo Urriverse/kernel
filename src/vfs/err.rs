@@ -39,6 +39,7 @@
 /// values, suitable for FFI and system call interfaces.
 #[repr(usize)]
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Error {
     /// An unknown or unspecified error occurred.
     ///

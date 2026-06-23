@@ -31,7 +31,7 @@ unsafe impl Sync for Dev {}
 #[allow(unused)]
 static ID: u32 = super::str4_to_u32("DEV0");
 
-pub static LOCK: Nutex<()> = Nutex::new(());
+#[allow(dead_code)] pub static LOCK: Nutex<()> = Nutex::new(());
 
 impl Sink for Dev
 {

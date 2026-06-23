@@ -62,6 +62,7 @@
 #![warn(unused_parens)]
 #![warn(unused_qualifications)]
 #![warn(unused_unsafe)]
+#![warn(dead_code)]
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
@@ -119,6 +120,9 @@ mod sched;
 
 /// Virtual File System (VFS) – inodes, mount points, file operations
 mod vfs;
+
+/// Event Bus (EBus) - asynchronous kernel communication subsystem
+mod ebus;
 
 // ============================================================================
 // SYNCHRONIZATION BARRIERS
@@ -223,20 +227,14 @@ entry! {
                 vfs::RootRef::new(
                     vfs::RootReg::new()
                 )
-            )
+            ),
+            None
         );
 
-        // Spawn the VFS test task – validates the VFS implementation
-        let _ = sched::spawn_kernel_task(
-            vfs_test,
-            sched::task::Priority(0),
-            "test",
-            Some(
-                vfs::RootRef::new(
-                    vfs::RootReg::new()
-                )
-            )
-        );
+        // --------------------------------------------------------------------
+        // PHASE 8: Event Bus Initialization (EBus)
+        // --------------------------------------------------------------------
+        ebus::init();
     }
 
     for AP {
@@ -270,7 +268,7 @@ entry! {
     }
 }
 
-fn vfs_test() {
+fn _vfs_test() {
     // Create PVFS instance
     let pvfs = Arc::new(vfs::Pvfs::new());
     let mb_id = vfs::register_mblock(pvfs.clone() as Arc<dyn vfs::FileSystem>);

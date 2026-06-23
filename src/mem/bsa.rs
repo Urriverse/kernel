@@ -40,14 +40,6 @@ impl Zone {
             Zone::Normal => 2,
         }
     }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Zone::Dma => "DMA",
-            Zone::Dma32 => "DMA32",
-            Zone::Normal => "Normal",
-        }
-    }
 }
 
 struct FreeArea {
@@ -584,6 +576,7 @@ pub fn usage() -> [usize; 3] {
     ]
 }
 
+#[allow(dead_code)]
 pub fn alloc_from_zone_direct(zone: Zone, count: usize) -> Paddr {
     if count == 0 {
         return Paddr::from_raw(0);

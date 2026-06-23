@@ -35,6 +35,7 @@ pub struct InodeId(pub u32, pub u32); // (inode number, metablock id)
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Kind {
     Unknown,
     File,

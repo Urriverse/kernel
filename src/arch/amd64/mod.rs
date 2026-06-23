@@ -369,6 +369,7 @@ pub fn late_init_bsp() {
 /// are set up.
 pub fn late_init() {
     acpi::init();
+    syscall::init();
     unsafe {
         core::arch::asm! {
             "sti"
@@ -401,20 +402,4 @@ pub fn get_time_from_boot() -> u64 {
 #[inline]
 pub fn get_time_from_boot_s() -> f32 {
     get_time_from_boot() as f32 / 1000.0
-}
-
-/// Halts the system.
-///
-/// This function never returns; it enters an infinite loop with `hlt`.
-pub fn exit() -> ! {
-    loop {
-        unsafe {
-            core::arch::asm! {
-                "2:",
-                "cli",
-                "hlt",
-                "jmp 2b",
-            }
-        }
-    }
 }

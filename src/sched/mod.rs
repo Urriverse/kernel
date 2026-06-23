@@ -198,14 +198,21 @@ fn idle_task() {
 ///   process. The `root` is set if provided.
 /// - The task is inserted into the runqueue of the current CPU.
 /// - The parent is set to the current task.
-pub fn spawn_kernel_task(entry: fn(), priority: Priority, name: &'static str, root: Option<RootRef>) -> TaskId {
+pub fn spawn_kernel_task(
+    entry: fn(),
+    priority: Priority,
+    name: &'static str,
+    root: Option<RootRef>,
+    cpu_affinity: Option<usize>,
+) -> TaskId {
     let stack = allocate_kernel_stack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
+    task.cpu_affinity = cpu_affinity;
 
     if let Some(x) = root {
         let mut proc;
         if let Some(p) = current_process() {
-            proc = (*p).clone()
+            proc = (*p).clone();
         } else {
             proc = Process::new();
         }
@@ -329,6 +336,7 @@ pub fn wakeup(wq: &Nutex<WaitQueue>) {
 /// # Notes
 /// This function blocks the current task until the child becomes a zombie,
 /// then removes it from the registry and returns its exit code.
+#[allow(dead_code)]
 pub fn wait_child(child_id: TaskId) -> i32 {
     loop {
         let mut registry = TASK_REGISTRY.lock();

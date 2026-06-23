@@ -170,6 +170,7 @@ impl<T> Nutex<T> {
     ///
     /// # Returns
     /// `Some(NutexGuard)` if the lock was acquired, `None` otherwise.
+    #[allow(dead_code)]
     pub fn try_lock(&self) -> Option<NutexGuard<'_, T>> {
         // Save the current interrupt state and disable interrupts.
         let rflags: u64;

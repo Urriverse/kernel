@@ -568,6 +568,7 @@ pub struct Exco {
     pub owned: bool,
 }
 
+#[allow(dead_code)]
 impl Exco {
     // ------------------------------------------------------------------------
     // CONSTRUCTORS

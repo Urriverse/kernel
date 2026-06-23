@@ -186,6 +186,7 @@ impl<T> Litex<T> {
     ///
     /// # Returns
     /// `Some(LitexGuard)` if the lock was acquired, `None` otherwise.
+    #[allow(dead_code)]
     pub fn try_lock(&self) -> Option<LitexGuard<'_, T>> {
         // Save the current interrupt state and disable interrupts.
         let rflags: u64;

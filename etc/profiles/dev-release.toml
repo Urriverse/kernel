@@ -7,6 +7,6 @@ PROFILE = "release"
 [cargo]
 profile = "dev-release"
 features = [
-    "lowlog",
+#    "lowlog",
     "devlog",
 ]

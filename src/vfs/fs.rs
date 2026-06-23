@@ -7,6 +7,7 @@ use crate::sync::RwLock;
 use crate::vfs::{InodeId, Inode, Kind, Error};
 
 /// The core interface that every filesystem must implement.
+#[allow(dead_code)]
 pub trait FileSystem: Send + Sync {
     /// Look up a child by name in a directory.
     fn lookup(&self, dir: InodeId, name: &str) -> Option<InodeId>;
@@ -37,11 +38,13 @@ pub trait FileSystem: Send + Sync {
 }
 
 /// MetaBlock (superblock) holds a filesystem instance and its unique ID.
+#[allow(dead_code)]
 pub struct MetaBlock {
     pub id: u32,
     pub fs: Arc<dyn FileSystem>,
 }
 
+#[allow(dead_code)]
 impl MetaBlock {
     pub fn new(id: u32, fs: Arc<dyn FileSystem>) -> Self {
         MetaBlock { id, fs }
@@ -55,6 +58,7 @@ lazy_static! {
 }
 
 /// Register a new MetaBlock and return its assigned ID.
+#[allow(dead_code)]
 pub fn register_mblock(fs: Arc<dyn FileSystem>) -> u32 {
     let mut reg = MBLK_REG.write();
     let id = reg.1;
@@ -65,6 +69,7 @@ pub fn register_mblock(fs: Arc<dyn FileSystem>) -> u32 {
 }
 
 /// Look up a MetaBlock by ID.
+#[allow(dead_code)]
 pub fn get_mblock(id: u32) -> Option<Arc<MetaBlock>> {
     MBLK_REG.read().0.get(&id).cloned()
 }

@@ -1,5 +1,5 @@
 // src/sched/task.rs
-use crate::{arch::{gdt::{USER_CODE_SELECTOR, USER_DATA_SELECTOR}, trap::TrapFrame}, sched::proc::Process};
+use crate::{arch::trap::TrapFrame, sched::proc::Process};
 use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::{boxed::Box, sync::Arc};
 
@@ -7,6 +7,7 @@ use alloc::{boxed::Box, sync::Arc};
 pub struct TaskId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TaskState {
     Runnable,
     Running,
@@ -34,6 +35,7 @@ impl Priority {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Task {
     pub id: TaskId,
     pub state: TaskState,
@@ -76,49 +78,7 @@ impl Default for FpuState {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
-impl Task {pub fn new_user(
-        entry: usize,
-        user_stack_top: usize,
-        kernel_stack_top: usize,
-        priority: Priority,
-        name: &'static str,
-    ) -> Box<Self> {
-        let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
-        let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
-        
-        let initial_kern_rsp = kernel_stack_top - 8;
-        unsafe {
-            *(initial_kern_rsp as *mut u64) = 0;
-        }
-        
-        frame.rip = entry as u64;
-        frame.rsp = user_stack_top as u64; // User-space stack
-        frame.cs = USER_CODE_SELECTOR as u64 | 3; // USER_CODE_SELECTOR | RING_3
-        frame.ss = USER_DATA_SELECTOR as u64 | 3; // USER_DATA_SELECTOR | RING_3
-        frame.rflags = 0x202; // IF=1
-        
-        Box::new(Self {
-            id,
-            state: TaskState::Runnable,
-            vruntime: 0,
-            deadline: 0,
-            weight: Priority::nice_to_weight(priority.0),
-            slice: 10_000,
-            ctx: Context {
-                frame,
-                fpu_state: FpuState::default(),
-            },
-            kernel_stack: kernel_stack_top,
-            user_stack: user_stack_top,
-            cpu_affinity: None,
-            name,
-            parent: None,
-            exit_code: -1,
-            process: Arc::new(Process::new()),
-            kernel_stack_top: 0,
-        })
-    }
-
+impl Task {
     pub fn new_kernel(
         entry: fn(),
         kernel_stack_top: usize,

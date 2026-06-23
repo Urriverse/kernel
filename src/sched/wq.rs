@@ -136,11 +136,13 @@ impl WaitQueue {
     ///
     /// # Returns
     /// A `Vec<TaskId>` containing all tasks that were waiting.
+    #[allow(dead_code)]
     pub fn wakeup_all(&mut self) -> alloc::vec::Vec<TaskId> {
         self.waiters.drain(..).collect()
     }
 
     /// Returns `true` if the wait queue is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.waiters.is_empty()
     }

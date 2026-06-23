@@ -274,32 +274,3 @@ pub fn free(ptr: *mut u8, layout: Layout) {
         }
     }
 }
-
-#[allow(static_mut_refs)]
-pub fn dump_stats() {
-    let soa = unsafe { &SOA_INSTANCE };
-    info!("--- SOA Statistics ---");
-    for (i, class) in soa.classes.iter().enumerate() {
-        let inner = class.inner.lock();
-        
-        let mut partial_count = 0;
-        let mut curr = inner.partial_slabs;
-        while let Some(node) = curr {
-            partial_count += 1;
-            curr = unsafe { node.as_ref().next };
-        }
-        
-        let mut full_count = 0;
-        curr = inner.full_slabs;
-        while let Some(node) = curr {
-            full_count += 1;
-            curr = unsafe { node.as_ref().next };
-        }
-
-        info!(
-            "Class {} ({} bytes): {} partial, {} full (obj/slab: {})",
-            i, class.size, partial_count, full_count, class.obj_per_slab
-        );
-    }
-    info!("----------------------");
-}

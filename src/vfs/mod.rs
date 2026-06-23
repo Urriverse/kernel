@@ -19,44 +19,54 @@ use alloc::sync::Arc;
 
 /// High‑level operations that take a MetaBlock reference.
 
+#[allow(dead_code)]
 pub fn lookup(mb: &MetaBlock, dir: InodeId, name: &str) -> Option<InodeId> {
     mb.fs.lookup(dir, name)
 }
 
+#[allow(dead_code)]
 pub fn readdir(mb: &MetaBlock, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {
     mb.fs.readdir(dir, offset)
 }
 
+#[allow(dead_code)]
 pub fn read(mb: &MetaBlock, file: InodeId, offset: usize, buf: &mut [u8]) -> Result<usize, Error> {
     mb.fs.read(file, offset, buf)
 }
 
+#[allow(dead_code)]
 pub fn write(mb: &MetaBlock, file: InodeId, offset: usize, buf: &[u8]) -> Result<usize, Error> {
     mb.fs.write(file, offset, buf)
 }
 
+#[allow(dead_code)]
 pub fn truncate(mb: &MetaBlock, file: InodeId, new_size: usize) -> Result<(), Error> {
     mb.fs.truncate(file, new_size)
 }
 
+#[allow(dead_code)]
 pub fn unlink(mb: &MetaBlock, inode: InodeId) -> Result<(), Error> {
     mb.fs.unlink(inode)
 }
 
+#[allow(dead_code)]
 pub fn link(mb: &MetaBlock, parent: InodeId, name: &str, child: InodeId) -> Result<(), Error> {
     mb.fs.link(parent, name, child)
 }
 
+#[allow(dead_code)]
 pub fn new(mb: &MetaBlock, inode: Inode, kind: Kind) -> Result<InodeId, Error> {
     mb.fs.new(mb.id, inode, kind)
 }
 
+#[allow(dead_code)]
 pub fn stat(mb: &MetaBlock, inode: InodeId) -> Option<Inode> {
     mb.fs.stat(inode)
 }
 
 /// Resolve an absolute path from the root mount point named "root".
 /// Returns the final InodeId and the MetaBlock that owns it.
+#[allow(dead_code)]
 pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
     // Normalize path: remove leading/trailing slashes, split by '/'
     let trimmed = path.trim_matches('/');
@@ -97,11 +107,13 @@ pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<Met
 }
 
 /// Helper: Check if an InodeId is a mount point in the given RootReg.
+#[allow(dead_code)]
 pub fn is_mount_point(roots: &RootReg, id: InodeId) -> bool {
     roots.snapshot().values().any(|&v| v == id)
 }
 
 // Enhanced resolution that switches MetaBlock when encountering a mount point.
+#[allow(dead_code)]
 pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
@@ -154,6 +166,7 @@ pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(Inod
     Ok((current_id, current_mb))
 }
 
+#[allow(dead_code)]
 pub fn listdir(mb: &MetaBlock, dir: InodeId) -> alloc::collections::btree_map::BTreeMap<String, InodeId> {
     let mut map = alloc::collections::btree_map::BTreeMap::new();
     let mut offset = 0;
@@ -164,6 +177,7 @@ pub fn listdir(mb: &MetaBlock, dir: InodeId) -> alloc::collections::btree_map::B
     map
 }
 
+#[allow(dead_code)]
 pub fn read_to_string(mb: &MetaBlock, file: InodeId) -> Result<String, Error> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 512];

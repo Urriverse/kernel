@@ -169,11 +169,13 @@ impl Runqueue {
     }
 
     /// Returns the currently running task, if any.
+    #[allow(dead_code)]
     pub fn current_task(&self) -> Option<&Task> {
         self.current.and_then(|id| self.tasks.get(&id)).map(|b| b.as_ref())
     }
 
     /// Returns a mutable reference to the currently running task, if any.
+    #[allow(dead_code)]
     pub fn current_task_mut(&mut self) -> Option<&mut Task> {
         self.current.and_then(|id| self.tasks.get_mut(&id)).map(|b| b.as_mut())
     }
@@ -189,16 +191,19 @@ impl Runqueue {
     }
 
     /// Returns the total load (sum of weights) of the runqueue.
+    #[allow(dead_code)]
     pub fn load(&self) -> u64 {
         self.load
     }
 
     /// Returns the number of tasks in the runqueue.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.tasks.len()
     }
 
     /// Returns `true` if the runqueue is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
     }

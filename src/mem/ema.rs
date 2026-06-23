@@ -76,6 +76,7 @@ pub fn alloc(count: usize) -> Paddr
     Paddr::from_raw(EMA.lock().alloc(count << 12))
 }
 
+#[allow(dead_code)]
 pub fn usage() -> usize
 {
     let ema = EMA.lock();

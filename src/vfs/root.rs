@@ -9,6 +9,7 @@ use crate::vfs::InodeId;
 /// Mount point registry for a process.
 pub struct RootReg(Litex<BTreeMap<String, InodeId>>);
 
+#[allow(dead_code)]
 impl RootReg {
     pub fn new() -> Self {
         Self(Litex::new(BTreeMap::new()))

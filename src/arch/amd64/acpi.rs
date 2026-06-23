@@ -185,6 +185,7 @@ pub fn eoi() {
 /// to specify the delivery semantics of the IPI.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum DeliveryMode {
     /// Deliver the interrupt to the target processor(s).
     Fixed        = 0b000 << 8,
@@ -201,9 +202,9 @@ pub enum DeliveryMode {
 }
 
 /// Constants for the Interrupt Command Register (ICR).
-pub const ICR_LEVEL_ASSERT:  u32 = 1 << 14;   // Assert the interrupt (vs. deassert).
-pub const ICR_DEST_MODE_PHYS: u32 = 0 << 11;  // Physical destination mode (APIC ID).
-pub const ICR_DEST_MODE_LOG:  u32 = 1 << 11;  // Logical destination mode.
+#[allow(dead_code)] pub const ICR_LEVEL_ASSERT:  u32 = 1 << 14;   // Assert the interrupt (vs. deassert).
+#[allow(dead_code)] pub const ICR_DEST_MODE_PHYS: u32 = 0 << 11;  // Physical destination mode (APIC ID).
+#[allow(dead_code)] pub const ICR_DEST_MODE_LOG:  u32 = 1 << 11;  // Logical destination mode.
 
 /// Sends an IPI to a target APIC ID.
 ///
@@ -218,6 +219,7 @@ pub const ICR_DEST_MODE_LOG:  u32 = 1 << 11;  // Logical destination mode.
 /// * `vector` – The interrupt vector to deliver.
 /// * `mode` – The delivery mode.
 #[inline]
+#[allow(dead_code)]
 pub fn send_ipi(target_apic_id: u32, vector: u8, mode: DeliveryMode) {
     let lapic = lapic::LocalApic::new();
 
@@ -246,6 +248,7 @@ pub fn send_ipi(target_apic_id: u32, vector: u8, mode: DeliveryMode) {
 /// * `target_apic_id` – The APIC ID of the target CPU.
 /// * `vector` – The interrupt vector to deliver.
 #[inline]
+#[allow(dead_code)]
 pub fn send_fixed_ipi(target_apic_id: u32, vector: u8) {
     send_ipi(target_apic_id, vector, DeliveryMode::Fixed);
 }

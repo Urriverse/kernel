@@ -182,7 +182,7 @@ impl Hpet {
 }
 
 /// The global HPET instance, protected by a `Nutex`.
-pub static INSTANCE: Nutex<Hpet> = Nutex::new(Hpet);
+#[allow(dead_code)] pub static INSTANCE: Nutex<Hpet> = Nutex::new(Hpet);
 
 // ============================================================================
 // HPET INITIALISATION

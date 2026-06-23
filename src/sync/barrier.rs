@@ -101,13 +101,6 @@ impl Barrier {
         self.open.store(true, Ordering::Release);
     }
 
-    /// Closes the barrier (sets the flag to `false`).
-    ///
-    /// This is rarely used; typically barriers are only opened once.
-    pub fn close(&self) {
-        self.open.store(false, Ordering::Release);
-    }
-
     /// Returns `true` if the barrier is open.
     ///
     /// This loads the flag with `Acquire` ordering to ensure that any writes
