@@ -96,34 +96,34 @@ pub extern crate alloc;
 
 /// Macros – logging, entry point, Limine requests, etc.
 #[macro_use]
-mod macros;
+pub mod macros;
 
 /// Runtime – entry point, panic handler, global allocator
-mod rt;
+pub mod rt;
 
 /// Synchronization primitives (mutexes, rwlocks, barriers, etc.)
-mod sync;
+pub mod sync;
 
 /// Kernel message logging system
-mod kmsg;
+pub mod kmsg;
 
 /// Memory management (allocators, paging, physical memory regions, etc.)
-mod mem;
+pub mod mem;
 
 /// Architecture-specific code (x86_64: GDT, IDT, paging, ACPI, syscalls, etc.)
-mod arch;
+pub mod arch;
 
 /// Device model (driver framework, device registration, method calls)
-#[allow(unused)] mod dev;
+pub mod dev;
 
 /// Scheduler (EEVDF-based task scheduler, processes, runqueues)
-mod sched;
+pub mod sched;
 
 /// Virtual File System (VFS) – inodes, mount points, file operations
-mod vfs;
+pub mod vfs;
 
 /// Event Bus (EBus) - asynchronous kernel communication subsystem
-mod ebus;
+pub mod ebus;
 
 // ============================================================================
 // SYNCHRONIZATION BARRIERS

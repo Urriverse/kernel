@@ -52,6 +52,10 @@ pub struct Task {
     pub exit_code: i32,
     pub process: Arc<Process>,
     pub kernel_stack_top: usize,
+    
+    /// NVDL: Absolute real-time deadline in ms (from boot). 
+    /// 0 = normal EEVDF task, >0 = Real-Time task in the Green Corridor.
+    pub rt_deadline: u64, 
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -78,9 +82,8 @@ impl Default for FpuState {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
-fn task_return_spurious() { super::exit(-2) }
-
 impl Task {
+    /// Standard kernel task spawner (no arguments).
     pub fn new_kernel(
         entry: fn(),
         kernel_stack_top: usize,
@@ -89,12 +92,10 @@ impl Task {
     ) -> Box<Self> {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
-        
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
-            *(initial_rsp as *mut u64) = task_return_spurious as *const() as u64;
+            *(initial_rsp as *mut u64) = 0;
         }
-        
         frame.rip = entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
         frame.cs = 0x08;  // KERNEL_CODE_SELECTOR
@@ -119,10 +120,12 @@ impl Task {
             parent: None,
             exit_code: -1,
             process: Arc::new(Process::new()),
-            kernel_stack_top: kernel_stack_top,
+            kernel_stack_top: kernel_stack_top, // FIXED: Was 0 originally
+            rt_deadline: 0,
         })
     }
 
+    /// Kernel task spawner that accepts a single `usize` argument via RDI.
     pub fn new_kernel_with_arg(
         entry: fn(usize),
         arg: usize,
@@ -134,7 +137,7 @@ impl Task {
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
-            *(initial_rsp as *mut u64) = task_return_spurious as *const() as u64;
+            *(initial_rsp as *mut u64) = 0;
         }
         frame.rip = entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
@@ -162,6 +165,7 @@ impl Task {
             exit_code: -1,
             process: Arc::new(Process::new()),
             kernel_stack_top: kernel_stack_top,
+            rt_deadline: 0,
         })
     }
 }
