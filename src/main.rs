@@ -216,7 +216,12 @@ entry! {
         sched::init(ticks_per_10ms);
 
         // --------------------------------------------------------------------
-        // PHASE 7: Spawn Initial Kernel Tasks (BSP)
+        // PHASE 7: Event Bus Initialization (EBus)
+        // --------------------------------------------------------------------
+        ebus::init();
+
+        // --------------------------------------------------------------------
+        // PHASE 8: Spawn Initial Kernel Tasks (BSP)
         // --------------------------------------------------------------------
 
         // Spawn the reaper task – reaps zombie processes
@@ -231,11 +236,6 @@ entry! {
             ),
             None
         );
-
-        // --------------------------------------------------------------------
-        // PHASE 8: Event Bus Initialization (EBus)
-        // --------------------------------------------------------------------
-        ebus::init();
     }
 
     for AP {
@@ -270,32 +270,41 @@ entry! {
 }
 
 fn _vfs_test() {
+    warn!("1");
     // Create PVFS instance
     let pvfs = Arc::new(vfs::Pvfs::new());
+    warn!("2");
     let mb_id = vfs::register_mblock(pvfs.clone() as Arc<dyn vfs::FileSystem>);
+    warn!("3");
     let mb = vfs::get_mblock(mb_id).unwrap();
-
+    warn!("4");
     // Create root directory
-    let root_inode = vfs::Inode::new();
+    let root_inode = vfs::Inode::default();
+    warn!("5");
     let root_id = vfs::new(&mb, root_inode, vfs::Kind::Directory).expect("Failed to create root dir");
-
+    warn!("6");
     // Mount it as "root" in the process namespace
     let roots = current_process().expect("NOPID").roots.clone();
+    warn!("7");
     roots.mount_new("root".to_string(), root_id).expect("Mount failed");
-
+    warn!("8");
     // Create a file
-    let file_inode = vfs::Inode::new();
+    let file_inode = vfs::Inode::default();
+    warn!("9");
     let file_id = vfs::new(&mb, file_inode, vfs::Kind::File).expect("Failed to create file");
-
+    warn!("10");
     // Link it into root
     vfs::link(&mb, root_id, "testfile", file_id).expect("Link failed");
-
+    warn!("11");
     // Write and read back
     vfs::write(&mb, file_id, 0, b"[NOT FAILED]").expect("Write failed");
+    warn!("12");
     let mut buf = *b"[FAILED]    ";
+    warn!("13");
     let n = vfs::read(&mb, file_id, 0, &mut buf).expect("Read failed");
+    warn!("14");
     debug!("vfs test: {}", str::from_utf8(&buf[..n]).unwrap());
-
+    warn!("15");
     sched::exit(0);
 }
 
@@ -313,8 +322,8 @@ fn _vfs_test() {
 fn reaper() {
     loop {
         crate::info!("waiting for any child to exit...");
-        if let Some((id, code)) = sched::wait_any() {
-            crate::info!("reaped zombie task {:?}, exit code: {}", id, code);
+        if let Some((id, task)) = sched::wait_any() {
+            crate::info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
         }
     }
 }

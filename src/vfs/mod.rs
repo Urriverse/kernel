@@ -1,5 +1,4 @@
 //! Virtual File System – public API and path resolution
-
 mod fs;
 mod inode;
 mod root;
@@ -9,15 +8,17 @@ mod err;
 pub use fs::*;
 pub use inode::*;
 pub use root::*;
+pub use err::*;
 #[allow(unused_imports)]
 pub use pvfs::*;
-pub use err::*;
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::sync::Arc;
 
-/// High‑level operations that take a MetaBlock reference.
+// ============================================================================
+// HIGH-LEVEL VFS OPERATIONS
+// ============================================================================
 
 #[allow(dead_code)]
 pub fn lookup(mb: &MetaBlock, dir: InodeId, name: &str) -> Option<InodeId> {
@@ -45,8 +46,8 @@ pub fn truncate(mb: &MetaBlock, file: InodeId, new_size: usize) -> Result<(), Er
 }
 
 #[allow(dead_code)]
-pub fn unlink(mb: &MetaBlock, inode: InodeId) -> Result<(), Error> {
-    mb.fs.unlink(inode)
+pub fn unlink(mb: &MetaBlock, dir: InodeId, name: &str) -> Result<(), Error> {
+    mb.fs.unlink(dir, name)
 }
 
 #[allow(dead_code)]
@@ -64,107 +65,94 @@ pub fn stat(mb: &MetaBlock, inode: InodeId) -> Option<Inode> {
     mb.fs.stat(inode)
 }
 
-/// Resolve an absolute path from the root mount point named "root".
-/// Returns the final InodeId and the MetaBlock that owns it.
-#[allow(dead_code)]
-pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
-    // Normalize path: remove leading/trailing slashes, split by '/'
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        // Empty path means root
-        let root_id = roots.lookup("root").ok_or(Error::NotMounted)?;
-        let mb = get_mblock(root_id.1).ok_or(Error::NoEntry)?;
-        return Ok((root_id, mb));
-    }
+// ============================================================================
+// PATH RESOLUTION
+// ============================================================================
 
-    let components: Vec<&str> = trimmed.split('/').collect();
-
-    // Start at the root mount
-    let mut current_id = roots.lookup("root").ok_or(Error::NotMounted)?;
-    let current_mb = get_mblock(current_id.1).ok_or(Error::NoEntry)?;
-
-    for comp in components {
-        if comp == "." {
-            continue;
-        } else if comp == ".." {
-            // Get parent
-            let parent_id = stat(&current_mb, current_id)
-                .ok_or(Error::NoEntry)?
-                .parent;
-            current_id = parent_id;
-        } else {
-            // Lookup in current directory
-            match lookup(&current_mb, current_id, comp) {
-                Some(child_id) => {
-                    current_id = child_id;
-                }
-                None => return Err(Error::NoEntry),
-            }
-        }
-    }
-
-    Ok((current_id, current_mb))
-}
-
-/// Helper: Check if an InodeId is a mount point in the given RootReg.
 #[allow(dead_code)]
 pub fn is_mount_point(roots: &RootReg, id: InodeId) -> bool {
     roots.snapshot().values().any(|&v| v == id)
 }
 
-// Enhanced resolution that switches MetaBlock when encountering a mount point.
+/// Resolve an absolute path from the root mount point named "root".
+/// Does not cross filesystem boundaries (mount points).
+#[allow(dead_code)]
+pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
+    resolve_path(roots, path, false)
+}
+
+/// Resolve an absolute path, crossing filesystem boundaries when encountering mount points.
 #[allow(dead_code)]
 pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
+    resolve_path(roots, path, true)
+}
+
+/// Internal path resolution engine.
+/// 
+/// Uses a path stack to correctly resolve ".." without relying on `inode.parent`,
+/// which is strictly necessary to support hardlinks and correctly traverse back 
+/// across mount boundaries.
+fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(InodeId, Arc<MetaBlock>), Error> {
     let trimmed = path.trim_matches('/');
+    
+    let root_id = roots.lookup("root").ok_or(Error::NotMounted)?;
+    let root_mb = get_mblock(root_id.1).ok_or(Error::NoEntry)?;
+    
     if trimmed.is_empty() {
-        let root_id = roots.lookup("root").ok_or(Error::NotMounted)?;
-        let mb = get_mblock(root_id.1).ok_or(Error::NoEntry)?;
-        return Ok((root_id, mb));
+        return Ok((root_id, root_mb));
     }
-
-    let components: Vec<&str> = trimmed.split('/').collect();
-
-    // Start at root
-    let mut current_id = roots.lookup("root").ok_or(Error::NotMounted)?;
-    let mut current_mb = get_mblock(current_id.1).ok_or(Error::NoEntry)?;
-
+    
+    let components: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
+    
+    // The path stack tracks our traversal context.
+    // This allows us to safely resolve ".." by simply popping the stack,
+    // completely avoiding the need for a `parent` pointer in the Inode.
+    let mut path_stack: Vec<(InodeId, Arc<MetaBlock>)> = vec![(root_id, root_mb)];
+    
     for comp in components {
         if comp == "." {
             continue;
         } else if comp == ".." {
-            let parent_id = stat(&current_mb, current_id)
-                .ok_or(Error::NoEntry)?
-                .parent;
-            // If parent is a mount point, we need to switch to the mount's filesystem.
-            if is_mount_point(roots, parent_id) {
-                // The parent inode is the root of some mount.
-                // Switch to that mount's MetaBlock.
-                let parent_inode = stat(&current_mb, parent_id).ok_or(Error::NoEntry)?;
-                // The parent's id.1 gives the MetaBlock id.
-                let mb_id = parent_id.1;
-                current_mb = get_mblock(mb_id).ok_or(Error::NoEntry)?;
-                current_id = parent_id;
-            } else {
-                current_id = parent_id;
+            // Go up one directory. We never pop the root.
+            if path_stack.len() > 1 {
+                path_stack.pop();
             }
         } else {
-            // Normal lookup
-            match lookup(&current_mb, current_id, comp) {
+            let (curr_id, curr_mb) = path_stack.last().unwrap();
+            
+            // Verify current node is a directory
+            let curr_stat = stat(curr_mb, *curr_id).ok_or(Error::NoEntry)?;
+            if curr_stat.kind != Kind::Directory {
+                return Err(Error::NotADirectory);
+            }
+            
+            match lookup(curr_mb, *curr_id, comp) {
                 Some(child_id) => {
-                    // If the child is a mount point, we switch to its filesystem.
-                    if is_mount_point(roots, child_id) {
-                        let mb_id = child_id.1;
-                        current_mb = get_mblock(mb_id).ok_or(Error::NoEntry)?;
+                    let mut next_mb = curr_mb.clone();
+                    let mut next_id = child_id;
+                    
+                    // If we hit a mount point and are allowed to cross it, switch MetaBlock
+                    if cross_mounts && is_mount_point(roots, child_id) {
+                        if let Some(mb) = get_mblock(child_id.1) {
+                            next_mb = mb;
+                            next_id = child_id; // The ID acts as the root of the new FS
+                        }
                     }
-                    current_id = child_id;
+                    
+                    path_stack.push((next_id, next_mb));
                 }
                 None => return Err(Error::NoEntry),
             }
         }
     }
-
-    Ok((current_id, current_mb))
+    
+    let (final_id, final_mb) = path_stack.last().unwrap();
+    Ok((*final_id, final_mb.clone()))
 }
+
+// ============================================================================
+// HELPER UTILITIES
+// ============================================================================
 
 #[allow(dead_code)]
 pub fn listdir(mb: &MetaBlock, dir: InodeId) -> alloc::collections::btree_map::BTreeMap<String, InodeId> {

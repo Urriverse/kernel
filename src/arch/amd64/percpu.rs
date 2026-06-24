@@ -89,7 +89,7 @@ use crate::arch::MAX_CPUS;
 #[derive(Debug)]
 pub struct PerCpu {
     pub user_rsp: u64,
-    pub kernel_stack_top: u64,
+    pub kernel_stack_top: usize,
     pub cpu_id: usize,
 }
 
@@ -188,7 +188,7 @@ pub fn current() -> &'static mut PerCpu {
 ///
 /// # Safety
 /// This function uses `wrmsr` to write an MSR, which is a privileged operation.
-pub fn init_syscall_gs(cpu_id: usize, kernel_stack_top: u64) {
+pub fn init_syscall_gs(cpu_id: usize, kernel_stack_top: usize) {
     unsafe {
         PERCPU_AREA[cpu_id].kernel_stack_top = kernel_stack_top;
         // IA32_KERNEL_GS_BASE (0xC0000102) points to our per‑CPU data.
@@ -203,6 +203,6 @@ pub fn init_syscall_gs(cpu_id: usize, kernel_stack_top: u64) {
 ///
 /// # Arguments
 /// * `stack_top` – The top address of the kernel stack (the stack grows down).
-pub fn set_kernel_stack(stack_top: u64) {
+pub fn set_kernel_stack(stack_top: usize) {
     current().kernel_stack_top = stack_top;
 }

@@ -1,5 +1,4 @@
 //! Purely Virtual Filesystem – in‑memory, no persistence
-
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -7,10 +6,16 @@ use core::cmp::min;
 use crate::sync::Litex;
 use crate::vfs::{FileSystem, Inode, InodeId, Kind, Error};
 
+/// Directory Entry mapping a name to an InodeId
+pub struct Dentry {
+    pub name: String,
+    pub inode_id: InodeId,
+}
+
 /// Content of an inode.
 enum Data {
     File(Vec<u8>),
-    Dir(Vec<(String, InodeId)>),
+    Dir(Vec<Dentry>),
 }
 
 /// PVFS private state.
@@ -35,9 +40,9 @@ impl FileSystem for Pvfs {
     fn lookup(&self, dir: InodeId, name: &str) -> Option<InodeId> {
         let data_guard = self.data.lock();
         if let Some(Data::Dir(entries)) = data_guard.get(&dir) {
-            for (n, id) in entries {
-                if n == name {
-                    return Some(*id);
+            for entry in entries {
+                if entry.name == name {
+                    return Some(entry.inode_id);
                 }
             }
         }
@@ -47,7 +52,7 @@ impl FileSystem for Pvfs {
     fn readdir(&self, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {
         let data_guard = self.data.lock();
         if let Some(Data::Dir(entries)) = data_guard.get(&dir) {
-            entries.get(offset).cloned()
+            entries.get(offset).map(|e| (e.name.clone(), e.inode_id))
         } else {
             None
         }
@@ -75,7 +80,6 @@ impl FileSystem for Pvfs {
                 let new_len = core::cmp::max(data.len(), offset + buf.len());
                 data.resize(new_len, 0);
                 data[offset..offset+buf.len()].copy_from_slice(buf);
-                // Update size in metadata
                 drop(data_guard);
                 let mut reg_guard = self.reg.lock();
                 if let Some(inode) = reg_guard.get_mut(&file.0) {
@@ -103,34 +107,50 @@ impl FileSystem for Pvfs {
         }
     }
 
-    fn unlink(&self, inode: InodeId) -> Result<(), Error> {
-        // Remove data
+    fn unlink(&self, dir: InodeId, name: &str) -> Result<(), Error> {
         let mut data_guard = self.data.lock();
-        if data_guard.remove(&inode).is_none() {
-            return Err(Error::NoEntry);
-        }
-        drop(data_guard);
-
-        // Get parent ID from metadata
-        let parent_id = {
-            let reg_guard = self.reg.lock();
-            if let Some(inode) = reg_guard.get(&inode.0) {
-                inode.parent
-            } else {
-                return Err(Error::NoEntry);
+        
+        // 1. Find target inode ID without removing yet
+        let target_inode_id = match data_guard.get(&dir) {
+            Some(Data::Dir(entries)) => {
+                match entries.iter().find(|e| e.name == name) {
+                    Some(e) => e.inode_id,
+                    None => return Err(Error::NoEntry),
+                }
             }
+            _ => return Err(Error::NotADirectory),
         };
 
-        // Remove from parent's directory entries
-        let mut data_guard = self.data.lock();
-        if let Some(Data::Dir(entries)) = data_guard.get_mut(&parent_id) {
-            entries.retain(|(_, id)| *id != inode);
+        // 2. Check if target is a non-empty directory
+        if let Some(Data::Dir(entries)) = data_guard.get(&target_inode_id) {
+            if !entries.is_empty() {
+                return Err(Error::NotEmpty);
+            }
         }
-        drop(data_guard);
 
-        // Remove from reg
-        let mut reg_guard = self.reg.lock();
-        reg_guard.remove(&inode.0);
+        // 3. Safe to remove the dentry
+        if let Some(Data::Dir(entries)) = data_guard.get_mut(&dir) {
+            entries.retain(|e| e.name != name);
+        }
+
+        // 4. Decrement nlink and delete if 0
+        let mut delete_inode = false;
+        {
+            let mut reg_guard = self.reg.lock();
+            if let Some(inode) = reg_guard.get_mut(&target_inode_id.0) {
+                inode.nlink = inode.nlink.saturating_sub(1);
+                if inode.nlink == 0 {
+                    delete_inode = true;
+                }
+            }
+        }
+
+        if delete_inode {
+            data_guard.remove(&target_inode_id);
+            let mut reg_guard = self.reg.lock();
+            reg_guard.remove(&target_inode_id.0);
+        }
+
         Ok(())
     }
 
@@ -138,13 +158,16 @@ impl FileSystem for Pvfs {
         let mut data_guard = self.data.lock();
         match data_guard.get_mut(&parent) {
             Some(Data::Dir(entries)) => {
-                // Check for duplicate
-                for (n, _) in entries.iter() {
-                    if n == name {
-                        return Err(Error::Found);
-                    }
+                if entries.iter().any(|e| e.name == name) {
+                    return Err(Error::Found);
                 }
-                entries.push((name.to_string(), child));
+                entries.push(Dentry { name: name.to_string(), inode_id: child });
+                drop(data_guard);
+                
+                let mut reg_guard = self.reg.lock();
+                if let Some(inode) = reg_guard.get_mut(&child.0) {
+                    inode.nlink += 1;
+                }
                 Ok(())
             }
             _ => Err(Error::NotADirectory),
@@ -152,36 +175,30 @@ impl FileSystem for Pvfs {
     }
 
     fn new(&self, mb_id: u32, mut inode: Inode, kind: Kind) -> Result<InodeId, Error> {
-        // Allocate new inode number
         let mut nxt_guard = self.nxt.lock();
         let ino = *nxt_guard;
         *nxt_guard += 1;
         drop(nxt_guard);
-
+        
         let id = InodeId(ino, mb_id);
         inode.id = id;
         inode.kind = kind;
-
-        // Insert metadata
+        inode.nlink = 0; // Unlinked initially
+        
         let mut reg_guard = self.reg.lock();
         reg_guard.insert(ino, inode);
         drop(reg_guard);
-
-        // Insert data
+        
         let mut data_guard = self.data.lock();
         match kind {
             Kind::File => data_guard.insert(id, Data::File(Vec::new())),
             Kind::Directory => data_guard.insert(id, Data::Dir(Vec::new())),
             _ => return Err(Error::Unknown),
         };
-
         Ok(id)
     }
 
     fn stat(&self, inode: InodeId) -> Option<Inode> {
-        if let Some(x) = self.reg.lock().get(&inode.0) {
-            return Some(unsafe { x.dublicate() })
-        }
-        None
+        self.reg.lock().get(&inode.0).copied()
     }
 }

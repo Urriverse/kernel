@@ -142,7 +142,7 @@ pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
 
     for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
-        let stack = allocate_kernel_stack(16 * 1024);
+        let stack = allocate_kernel_stack(1 << 14);
         let idle = Task::new_kernel(idle_task, stack, Priority(19), "idle");
         let mut rq = RUNQUEUES[cpu].lock();
         rq.set_current(idle.id);
@@ -150,7 +150,7 @@ pub fn init(ticks_per_10ms: u64) {
 
         // Set kernel stack for the BSP (CPU 0) – other CPUs will set it when they start.
         if cpu == crate::arch::current_cpu() {
-            crate::arch::percpu::set_kernel_stack(stack as u64);
+            crate::arch::percpu::set_kernel_stack(stack);
         }
     }
 
@@ -172,9 +172,12 @@ fn allocate_kernel_stack(size: usize) -> usize {
 /// Idle task – runs when no other task is runnable.
 ///
 /// It simply halts the CPU, waiting for interrupts.
+#[unsafe(naked)]
 fn idle_task() {
-    loop {
-        unsafe { core::arch::asm!("hlt"); }
+    core::arch::naked_asm!{
+        "2:",
+        "hlt",
+        "jmp 2b",
     }
 }
 
@@ -358,7 +361,7 @@ pub fn wait_child(child_id: TaskId) -> i32 {
 ///
 /// # Notes
 /// The zombie is removed from the registry before returning.
-pub fn wait_any() -> Option<(TaskId, i32)> {
+pub fn wait_any() -> Option<(TaskId, Box<Task>)> {
     loop {
         let mut registry = TASK_REGISTRY.lock();
 
@@ -367,8 +370,7 @@ pub fn wait_any() -> Option<(TaskId, i32)> {
             .map(|(id, _)| *id);
 
         if let Some(id) = zombie_id {
-            let task = registry.remove(&id).unwrap();
-            return Some((id, task.exit_code));
+            return Some((id, registry.remove(&id).unwrap()));
         }
         drop(registry);
         sleep(&EXIT_WQ);
@@ -440,7 +442,7 @@ pub fn reschedule(frame: &mut TrapFrame) {
 
                 let cpu = crate::arch::current_cpu();
                 crate::arch::gdt::set_kernel_stack(cpu, new_task.kernel_stack_top as u64);
-                crate::arch::percpu::set_kernel_stack(new_task.kernel_stack_top as u64);
+                crate::arch::percpu::set_kernel_stack(new_task.kernel_stack_top);
 
                 if let Some(curr_id) = current_id {
                     let old_pid = unsafe { RUNQUEUES[cpu].inner() }.tasks().get(&curr_id).unwrap().process.pid;
