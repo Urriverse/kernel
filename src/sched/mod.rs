@@ -666,3 +666,67 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
     crate::info!("Process {} SEGFAULT at {:#X} (RIP: {:#X}, code: {:#X})", proc.pid, addr, rip, error_code);
     exit(139);
 }
+
+// In src/sched/mod.rs
+
+/// Spawns a kernel task that accepts a single `usize` argument.
+pub fn spawn_kernel_task_with_arg(
+    entry: fn(usize),
+    arg: usize,
+    priority: Priority,
+    name: &'static str,
+    root: Option<RootRef>,
+    cpu_affinity: Option<usize>,
+) -> TaskId {
+    let stack = allocate_kernel_stack(32 * 1024);
+    let mut task = Task::new_kernel_with_arg(entry, arg, stack, priority, name);
+    task.cpu_affinity = cpu_affinity;
+    
+    if let Some(x) = root {
+        let mut proc;
+        if let Some(p) = current_process() {
+            proc = (*p).clone();
+        } else {
+            proc = Process::new();
+        }
+        proc.roots = x;
+        task.process = Arc::new(proc);
+    }
+    
+    let cpu = crate::arch::current_cpu();
+    let rq = RUNQUEUES[cpu].lock();
+    task.parent = rq.current_task_id();
+    drop(rq);
+    
+    let id = task.id;
+    RUNQUEUES[cpu].lock().insert(task);
+    id
+}
+
+/// Spawns a new kernel task from a Rust closure.
+///
+/// This safely boxes the closure, passes it as a raw pointer to a trampoline,
+/// executes it, and then cleanly exits the thread.
+pub fn spawn_closure_task<F>(
+    closure: F,
+    priority: Priority,
+    name: &'static str,
+    root: Option<RootRef>,
+    cpu_affinity: Option<usize>,
+) -> TaskId
+where
+    F: FnOnce() + Send + 'static,
+{
+    let boxed = Box::new(closure);
+    let arg = Box::into_raw(boxed) as usize;
+
+    fn trampoline<F: FnOnce() + Send + 'static>(arg: usize) {
+        // Reconstruct the Box to take ownership and automatically free it on exit
+        let closure = unsafe { Box::from_raw(arg as *mut F) };
+        closure();
+        // Terminate the subscriber thread cleanly
+        exit(0);
+    }
+
+    spawn_kernel_task_with_arg(trampoline::<F>, arg, priority, name, root, cpu_affinity)
+}

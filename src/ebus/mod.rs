@@ -1,24 +1,23 @@
-//! # Event Bus (EBus) – Global + Per‑CPU Queues with Time‑Limited Workers
+//! # Event Bus (EBus) – Global + Per‑CPU Queues with Isolated Subscriber Threads
 //!
-//! - Default events go to a global lock‑free queue, processed by an unpinned worker.
-//! - Affinity events go to a specific CPU’s queue, processed by that CPU’s pinned worker.
-//! - Workers yield after 10 ms of continuous event processing to avoid starving other tasks.
-//! - Slow callbacks (>5 ms) trigger a warning.
+//! - Default events go to a global bounded queue, processed by an unpinned worker.
+//! - Affinity events go to a specific CPU’s bounded queue, processed by that CPU’s pinned worker.
+//! - Workers spawn an isolated kernel thread for EACH subscriber callback via `spawn_closure_task`.
+//! - This guarantees the worker thread NEVER blocks, even if a subscriber infinite-loops.
+//! - Slow callbacks (>5 ms) trigger a warning before the thread exits.
 
 use crate::arch;
 use crate::sched;
 use crate::sync::{Nutex, RwLock};
 use crate::sched::wq::WaitQueue;
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
-use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::mem::MaybeUninit;
+use core::sync::atomic::Ordering;
 
 // ============================================================================
 // TYPES
 // ============================================================================
-
 pub type EventId = u64;
 pub type EventCallback = fn(EventId, usize);
 
@@ -33,185 +32,117 @@ struct Subscriber {
 }
 
 // ============================================================================
-// LOCK‑FREE MPSC QUEUE (Michael‑Scott)
+// BOUNDED QUEUE (Fixes UAF and OOM)
 // ============================================================================
+const QUEUE_CAPACITY: usize = 1024;
 
-struct Node<T> {
-    value: Option<T>,
-    next: AtomicPtr<Node<T>>,
+struct BoundedQueue {
+    inner: Nutex<VecDeque<Event>>,
 }
 
-impl<T> Node<T> {
-    fn new(value: T) -> Box<Self> {
-        Box::new(Self {
-            value: Some(value),
-            next: AtomicPtr::new(ptr::null_mut()),
-        })
-    }
-
-    fn sentinel() -> Box<Self> {
-        Box::new(Self {
-            value: None,
-            next: AtomicPtr::new(ptr::null_mut()),
-        })
-    }
-}
-
-pub struct MpscQueue<T> {
-    head: AtomicPtr<Node<T>>,
-    tail: AtomicPtr<Node<T>>,
-}
-
-impl<T> MpscQueue<T> {
-    pub const fn new() -> Self {
+impl BoundedQueue {
+    pub fn new() -> Self {
         Self {
-            head: AtomicPtr::new(ptr::null_mut()),
-            tail: AtomicPtr::new(ptr::null_mut()),
+            inner: Nutex::new(VecDeque::new()),
         }
     }
 
-    pub fn init(&self) {
-        let sentinel = Box::into_raw(Node::<T>::sentinel());
-        self.head.store(sentinel, Ordering::Release);
-        self.tail.store(sentinel, Ordering::Release);
+    pub fn enqueue(&self, event: Event) -> Result<(), ()> {
+        let mut q = self.inner.lock();
+        if q.len() >= QUEUE_CAPACITY {
+            crate::warn!("EBus: Queue full, dropping event {:#x}", event.id);
+            return Err(());
+        }
+        q.push_back(event);
+        Ok(())
     }
 
-    pub fn enqueue(&self, value: T) -> Result<(), ()> {
-        let new_node = Box::into_raw(Node::new(value));
-        loop {
-            let tail = self.tail.load(Ordering::Acquire);
-            let next = unsafe { (*tail).next.load(Ordering::Acquire) };
-            if next.is_null() {
-                if unsafe { (*tail).next.compare_exchange(
-                    ptr::null_mut(),
-                    new_node,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                ) }.is_ok() {
-                    let _ = self.tail.compare_exchange(
-                        tail,
-                        new_node,
-                        Ordering::Release,
-                        Ordering::Relaxed,
-                    );
-                    return Ok(());
-                }
-            } else {
-                let _ = self.tail.compare_exchange(
-                    tail,
-                    next,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                );
-            }
-        }
-    }
-
-    pub fn dequeue(&self) -> Option<T> {
-        loop {
-            let head = self.head.load(Ordering::Acquire);
-            let tail = self.tail.load(Ordering::Acquire);
-            let next = unsafe { (*head).next.load(Ordering::Acquire) };
-
-            if head == tail {
-                if next.is_null() {
-                    return None;
-                }
-                let _ = self.tail.compare_exchange(
-                    tail,
-                    next,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                );
-            } else {
-                if let Some(value) = unsafe { (*next).value.take() } {
-                    if self.head.compare_exchange(
-                        head,
-                        next,
-                        Ordering::Release,
-                        Ordering::Relaxed,
-                    ).is_ok() {
-                        unsafe { drop(Box::from_raw(head)); }
-                        return Some(value);
-                    }
-                } else {
-                    return None;
-                }
-            }
-        }
+    pub fn dequeue(&self) -> Option<Event> {
+        let mut q = self.inner.lock();
+        q.pop_front()
     }
 }
-
-unsafe impl<T: Send> Sync for MpscQueue<T> {}
-unsafe impl<T: Send> Send for MpscQueue<T> {}
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
-
-/// Maximum time (in ms) a worker may spend processing events before yielding.
 const MAX_WORKER_TIME_MS: u64 = 10;
-
-/// If a single callback takes longer than this (ms), a warning is logged.
 const SLOW_CALLBACK_WARN_MS: u64 = 5;
 
 // ============================================================================
 // GLOBAL STATE
 // ============================================================================
-
 static SUBSCRIBERS: RwLock<BTreeMap<EventId, Vec<Subscriber>>> =
     RwLock::new(BTreeMap::new());
 
-static GLOBAL_QUEUE: MpscQueue<Event> = MpscQueue::new();
-static mut CPU_QUEUES: [MpscQueue<Event>; arch::MAX_CPUS] =
-    [const{MpscQueue::new()}; arch::MAX_CPUS];
+lazy_static! {
+    static ref GLOBAL_QUEUE: BoundedQueue = BoundedQueue::new();
+}
+
+static mut CPU_QUEUES: [MaybeUninit<BoundedQueue>; arch::MAX_CPUS] =
+    [const { MaybeUninit::uninit() }; arch::MAX_CPUS];
 
 static GLOBAL_WQ: Nutex<WaitQueue> = Nutex::new(WaitQueue::new());
-static mut CPU_WQS: [Nutex<WaitQueue>; arch::MAX_CPUS] =
-    [const{Nutex::new(WaitQueue::new())}; arch::MAX_CPUS];
+static mut CPU_WQS: [MaybeUninit<Nutex<WaitQueue>>; arch::MAX_CPUS] =
+    [const { MaybeUninit::uninit() }; arch::MAX_CPUS];
 
 static INITIALIZED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 // ============================================================================
-// EVENT DISPATCH (with slow‑callback detection)
+// EVENT DISPATCH (Spawns isolated threads via Closures)
 // ============================================================================
-
 #[inline]
-fn dispatch_event(event: Event) {
-    let guard = SUBSCRIBERS.read();
-    if let Some(subs) = guard.get(&event.id) {
-        for sub in subs {
-            let start = arch::get_time_from_boot();
-            (sub.callback)(event.id, event.data);
-            let elapsed = arch::get_time_from_boot() - start;
-            if elapsed > SLOW_CALLBACK_WARN_MS {
-                crate::warn!(
-                    "EBus: slow callback for event {:#x} took {} ms (limit {} ms)",
-                    event.id, elapsed, SLOW_CALLBACK_WARN_MS
-                );
-            }
+fn dispatch_event(event: Event, affinity: Option<usize>) {
+    // 1. Snapshot callbacks under the read lock
+    let callbacks: Vec<EventCallback> = {
+        let guard = SUBSCRIBERS.read();
+        if let Some(subs) = guard.get(&event.id) {
+            subs.iter().map(|s| s.callback).collect()
+        } else {
+            return;
         }
+    }; // Read lock is safely dropped here
+
+    // 2. Spawn an isolated thread for each callback
+    for callback in callbacks {
+        let start_time = arch::get_time_from_boot();
+        
+        // The closure captures `callback`, `event`, and `start_time` by value.
+        sched::spawn_closure_task(
+            move || {
+                // Execute the subscriber callback
+                callback(event.id, event.data);
+                
+                // Check execution time
+                let elapsed = arch::get_time_from_boot() - start_time;
+                if elapsed > SLOW_CALLBACK_WARN_MS {
+                    crate::warn!(
+                        "EBus: subscriber thread for event {:#x} took {} ms (limit {} ms)",
+                        event.id, elapsed, SLOW_CALLBACK_WARN_MS
+                    );
+                }
+            },
+            sched::task::Priority(0),
+            "ebus_sub",
+            None,
+            affinity, // Inherit affinity so it stays on the correct CPU if applicable
+        );
     }
 }
 
 // ============================================================================
-// WORKER TASKS (with time‑limited processing)
+// WORKER TASKS (Pure Dispatchers)
 // ============================================================================
-
 fn global_worker() {
     loop {
         sched::sleep(&GLOBAL_WQ);
-
         let mut start_time = arch::get_time_from_boot();
         while let Some(event) = GLOBAL_QUEUE.dequeue() {
-            dispatch_event(event);
-
+            dispatch_event(event, None);
             let now = arch::get_time_from_boot();
             if now - start_time > MAX_WORKER_TIME_MS {
-                // Yield the CPU to allow other tasks to run.
                 sched::yield_now();
-                // Reset the timer for the next batch.
                 start_time = arch::get_time_from_boot();
             }
         }
@@ -220,13 +151,19 @@ fn global_worker() {
 
 fn cpu_worker() {
     let cpu = arch::current_cpu();
+    
+    let (queue, wq) = unsafe {
+        (
+            &*CPU_QUEUES[cpu].as_ptr(),
+            &*CPU_WQS[cpu].as_ptr(),
+        )
+    };
+
     loop {
-        unsafe { sched::sleep(&CPU_WQS[cpu]); }
-
+        sched::sleep(wq);
         let mut start_time = arch::get_time_from_boot();
-        while let Some(event) = unsafe { CPU_QUEUES[cpu].dequeue() } {
-            dispatch_event(event);
-
+        while let Some(event) = queue.dequeue() {
+            dispatch_event(event, Some(cpu));
             let now = arch::get_time_from_boot();
             if now - start_time > MAX_WORKER_TIME_MS {
                 sched::yield_now();
@@ -239,29 +176,27 @@ fn cpu_worker() {
 // ============================================================================
 // PUBLIC API
 // ============================================================================
-
 pub fn init() {
     if INITIALIZED.swap(true, Ordering::AcqRel) {
         return;
     }
 
-    GLOBAL_QUEUE.init();
-
     let num_cpus = arch::num_cpus();
     for cpu in 0..num_cpus {
         unsafe {
-            CPU_QUEUES[cpu].init();
+            CPU_QUEUES[cpu].write(BoundedQueue::new());
+            CPU_WQS[cpu].write(Nutex::new(WaitQueue::new()));
         }
+        
         sched::spawn_kernel_task(
             cpu_worker,
             sched::task::Priority(0),
             "ebus_cpu_worker",
             None,
-            Some(cpu), // pinned to this CPU
+            Some(cpu), 
         );
     }
 
-    // Global worker – unpinned (scheduler decides where to run)
     sched::spawn_kernel_task(
         global_worker,
         sched::task::Priority(0),
@@ -292,26 +227,24 @@ pub fn unsubscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()>
     }
 }
 
-/// Publish an event.
-///
-/// * `affinity: None` – enqueued to the global queue.
-/// * `affinity: Some(cpu)` – enqueued to that CPU’s local queue.
 #[allow(dead_code)]
 pub fn publish(event_id: EventId, data: usize, affinity: Option<usize>) -> Result<(), ()> {
     let event = Event { id: event_id, data };
-
     match affinity {
         None => {
-            GLOBAL_QUEUE.enqueue(event).map_err(|_| ())?;
+            GLOBAL_QUEUE.enqueue(event)?;
             sched::wakeup(&GLOBAL_WQ);
         }
         Some(cpu) => {
             if cpu >= arch::MAX_CPUS {
+                crate::warn!("EBus: Invalid CPU affinity {}", cpu);
                 return Err(());
             }
             unsafe {
-                CPU_QUEUES[cpu].enqueue(event).map_err(|_| ())?;
-                sched::wakeup(&CPU_WQS[cpu]);
+                let queue = &*CPU_QUEUES[cpu].as_ptr();
+                let wq = &*CPU_WQS[cpu].as_ptr();
+                queue.enqueue(event)?;
+                sched::wakeup(wq);
             }
         }
     }

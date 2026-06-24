@@ -50,6 +50,7 @@
 #![feature(const_destruct)]
 #![feature(const_cmp)]
 #![feature(mem_copy_fn)]
+#![feature(naked_functions_rustic_abi)]
 
 #![allow(unused)]
 #![allow(clippy::missing_transmute_annotations)]

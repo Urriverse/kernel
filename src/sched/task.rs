@@ -78,6 +78,8 @@ impl Default for FpuState {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
+fn task_return_spurious() { super::exit(-2) }
+
 impl Task {
     pub fn new_kernel(
         entry: fn(),
@@ -90,7 +92,7 @@ impl Task {
         
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
-            *(initial_rsp as *mut u64) = 0; 
+            *(initial_rsp as *mut u64) = task_return_spurious as *const() as u64;
         }
         
         frame.rip = entry as *const () as u64;
@@ -117,7 +119,49 @@ impl Task {
             parent: None,
             exit_code: -1,
             process: Arc::new(Process::new()),
-            kernel_stack_top: 0,
+            kernel_stack_top: kernel_stack_top,
+        })
+    }
+
+    pub fn new_kernel_with_arg(
+        entry: fn(usize),
+        arg: usize,
+        kernel_stack_top: usize,
+        priority: Priority,
+        name: &'static str,
+    ) -> Box<Self> {
+        let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
+        let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
+        let initial_rsp = kernel_stack_top - 8;
+        unsafe {
+            *(initial_rsp as *mut u64) = task_return_spurious as *const() as u64;
+        }
+        frame.rip = entry as *const () as u64;
+        frame.rsp = initial_rsp as u64;
+        frame.rdi = arg as u64; // Pass argument via RDI (System V AMD64 ABI)
+        frame.cs = 0x08;  
+        frame.ss = 0x10;  
+        frame.rflags = 0x202;  
+        
+        Box::new(Self {
+            id,
+            state: TaskState::Runnable,
+            vruntime: 0,
+            deadline: 0,
+            weight: Priority::nice_to_weight(priority.0),
+            slice: 10_000,
+            ctx: Context {
+                frame,
+                fpu_state: FpuState::default(),
+            },
+            kernel_stack: kernel_stack_top,
+            user_stack: 0,
+            cpu_affinity: None,
+            name,
+            parent: None,
+            exit_code: -1,
+            process: Arc::new(Process::new()),
+            kernel_stack_top: kernel_stack_top,
         })
     }
 }
