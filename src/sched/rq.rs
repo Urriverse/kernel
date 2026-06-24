@@ -3,12 +3,6 @@
 //! This module implements the per‑CPU runqueue for the EEVDF (Earliest Eligible
 //! Virtual Deadline First) scheduler, extended with a strict Earliest Deadline First 
 //! (EDF) "Green Corridor" for real-time tasks.
-//!
-//! ## NVDL (Green Corridor)
-//! Tasks with `rt_deadline > 0` are placed in a separate `rt_tasks` BTreeSet.
-//! The scheduler checks this set *before* the normal EEVDF queue. While a task 
-//! is in the NVDL queue, its `vruntime` is frozen, effectively pausing the 
-//! EEVDF universe for that task so it isn't penalized for doing critical RT work.
 
 use alloc::{boxed::Box, collections::{BTreeMap, BTreeSet}};
 use super::task::{Task, TaskId};
@@ -74,7 +68,7 @@ impl PartialOrd for RtTaskKey {
 pub struct Runqueue {
     tasks: BTreeMap<TaskId, Box<Task>>,
     by_deadline: BTreeSet<TaskKey>,
-    rt_tasks: BTreeSet<RtTaskKey>, // <--- NVDL Real-Time Runqueue
+    rt_tasks: BTreeSet<RtTaskKey>, 
     min_vruntime: u64,
     current: Option<TaskId>,
     load: u64,
@@ -95,13 +89,8 @@ impl Runqueue {
     // ========================================================================
     // ACCESSORS
     // ========================================================================
-    pub fn tasks(&self) -> &BTreeMap<TaskId, Box<Task>> {
-        &self.tasks
-    }
-
-    pub fn tasks_mut(&mut self) -> &mut BTreeMap<TaskId, Box<Task>> {
-        &mut self.tasks
-    }
+    pub fn tasks(&self) -> &BTreeMap<TaskId, Box<Task>> { &self.tasks }
+    pub fn tasks_mut(&mut self) -> &mut BTreeMap<TaskId, Box<Task>> { &mut self.tasks }
 
     #[allow(dead_code)]
     pub fn current_task(&self) -> Option<&Task> {
@@ -113,46 +102,21 @@ impl Runqueue {
         self.current.and_then(|id| self.tasks.get_mut(&id)).map(|b| b.as_mut())
     }
 
-    pub fn set_current(&mut self, id: TaskId) {
-        self.current = Some(id);
-    }
+    pub fn set_current(&mut self, id: TaskId) { self.current = Some(id); }
+    pub fn current_task_id(&self) -> Option<TaskId> { self.current }
+    pub fn clear_current(&mut self) { self.current = None; }
 
-    pub fn current_task_id(&self) -> Option<TaskId> {
-        self.current
-    }
-
-    #[allow(dead_code)]
-    pub fn load(&self) -> u64 {
-        self.load
-    }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.tasks.len()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    pub fn clear_current(&mut self) {
-        self.current = None;
-    }
+    #[allow(dead_code)] pub fn load(&self) -> u64 { self.load }
+    #[allow(dead_code)] pub fn len(&self) -> usize { self.tasks.len() }
+    #[allow(dead_code)] pub fn is_empty(&self) -> bool { self.tasks.is_empty() }
 
     // ========================================================================
     // TASK INSERTION AND REMOVAL
     // ========================================================================
-    pub fn insert(&mut self, task: Box<Task>) {
-        let mut t = task;
-        if t.vruntime < self.min_vruntime {
-            t.vruntime = self.min_vruntime;
-        }
-        if t.deadline == 0 {
-            t.deadline = t.vruntime + t.slice;
-        }
+    /// Internal insert. Assumes vruntime and deadline are already correctly set.
+    fn insert(&mut self, task: Box<Task>) {
+        let t = task;
         
-        // NVDL: Insert into RT queue if applicable
         if t.rt_deadline > 0 {
             self.rt_tasks.insert(RtTaskKey { deadline: t.rt_deadline, id: t.id });
         }
@@ -169,7 +133,6 @@ impl Runqueue {
 
     pub fn remove(&mut self, id: TaskId) -> Option<Box<Task>> {
         if let Some(task) = self.tasks.remove(&id) {
-            // NVDL: Remove from RT queue if applicable
             if task.rt_deadline > 0 {
                 self.rt_tasks.remove(&RtTaskKey { deadline: task.rt_deadline, id: task.id });
             }
@@ -188,12 +151,67 @@ impl Runqueue {
     }
 
     // ========================================================================
+    // SPAWN, SLEEP, AND WAKEUP (ECO-FRIENDLY LAG DECAY)
+    // ========================================================================
+    /// Spawns a new task. Sets its vruntime to the current min_vruntime so it 
+    /// doesn't get a massive, system-stalling boost upon creation.
+    pub fn spawn_task(&mut self, mut task: Box<Task>) {
+        task.vruntime = self.min_vruntime;
+        task.deadline = task.vruntime + task.slice;
+        self.insert(task);
+    }
+
+    /// Moves a task to the Sleeping state.
+    /// Crucially, it removes the task from `by_deadline` so it doesn't freeze `min_vruntime`.
+    pub fn sleep_task(&mut self, id: TaskId) {
+        if let Some(mut task) = self.tasks.remove(&id) {
+            let key = TaskKey {
+                deadline: task.deadline,
+                vruntime: task.vruntime,
+                id: task.id,
+            };
+            self.by_deadline.remove(&key);
+            self.load -= task.weight;
+            
+            if task.rt_deadline > 0 {
+                self.rt_tasks.remove(&RtTaskKey { deadline: task.rt_deadline, id: task.id });
+            }
+            
+            task.state = TaskState::Sleeping;
+            // Keep in `tasks` map for lookups, but out of scheduling trees
+            self.tasks.insert(id, task);
+        }
+    }
+
+    /// Wakes up a task and applies Eco-Friendly Lag Decay.
+    pub fn wakeup_task(&mut self, id: TaskId) {
+        if let Some(mut task) = self.tasks.remove(&id) {
+            task.state = TaskState::Runnable;
+            
+            // LAG DECAY:
+            // If the task slept for a long time, it accumulated massive lag (credit).
+            // Giving it all that credit causes long, power-hungry execution bursts.
+            // We halve the lag and cap it at a single time slice to be "eco-friendly".
+            if task.rt_deadline == 0 && task.vruntime < self.min_vruntime {
+                let lag = self.min_vruntime - task.vruntime;
+                let decayed_lag = (lag >> 1).min(task.slice);
+                task.vruntime = self.min_vruntime - decayed_lag;
+            }
+            
+            if task.deadline == 0 || task.vruntime >= task.deadline {
+                task.deadline = task.vruntime + task.slice;
+            }
+
+            self.insert(task);
+        }
+    }
+
+    // ========================================================================
     // VIRTUAL RUNTIME UPDATE (GREEN CORRIDOR)
     // ========================================================================
     pub fn update_vruntime(&mut self, delta_ms: u64) {
         if let Some(curr_id) = self.current {
             if let Some(mut task) = self.remove(curr_id) {
-                // GREEN CORRIDOR: RT tasks do not accumulate vruntime
                 if task.rt_deadline == 0 {
                     let delta_vruntime = (delta_ms as u128 * NICE_0_WEIGHT as u128 / task.weight as u128) as u64;
                     task.vruntime += delta_vruntime;
@@ -208,6 +226,8 @@ impl Runqueue {
     }
 
     fn advance_min_vruntime(&mut self) {
+        // Because sleeping tasks are no longer in `by_deadline`, this correctly
+        // advances the virtual clock based ONLY on runnable tasks.
         if let Some(min_key) = self.by_deadline.iter().min_by_key(|k| k.vruntime)
             && min_key.vruntime > self.min_vruntime {
             self.min_vruntime = min_key.vruntime;
@@ -260,8 +280,6 @@ impl Runqueue {
     // ========================================================================
     // NVDL API
     // ========================================================================
-    /// Updates the NVDL real-time deadline for a task.
-    /// Set to 0 to demote back to normal EEVDF.
     pub fn set_rt_deadline(&mut self, id: TaskId, new_deadline: u64) {
         if let Some(task) = self.tasks.get_mut(&id) {
             let old_deadline = task.rt_deadline;

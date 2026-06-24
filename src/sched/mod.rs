@@ -6,10 +6,10 @@
 // ============================================================================
 // SUBMODULES
 // ============================================================================
-pub mod task;   // Task structure, TaskId, Priority, Context
-pub mod rq;     // Runqueue (per-CPU), EEVDF + NVDL logic
-pub mod wq;     // WaitQueue for task sleeping
-pub mod proc;   // Process structure, address space, VMM, root FS
+pub mod task;   
+pub mod rq;     
+pub mod wq;     
+pub mod proc;   
 
 // ============================================================================
 // IMPORTS
@@ -45,7 +45,7 @@ pub fn init(ticks_per_10ms: u64) {
         let idle = Task::new_kernel(idle_task, stack, Priority(19), "idle");
         let mut rq = RUNQUEUES[cpu].lock();
         rq.set_current(idle.id);
-        rq.insert(idle);
+        rq.spawn_task(idle); // Use spawn_task for proper vruntime init
         if cpu == crate::arch::current_cpu() {
             crate::arch::percpu::set_kernel_stack(stack);
         }
@@ -99,11 +99,10 @@ pub fn spawn_kernel_task(
     drop(rq);
     
     let id = task.id;
-    RUNQUEUES[cpu].lock().insert(task);
+    RUNQUEUES[cpu].lock().spawn_task(task); // Use spawn_task
     id
 }
 
-/// Spawns a kernel task that accepts a single `usize` argument.
 pub fn spawn_kernel_task_with_arg(
     entry: fn(usize),
     arg: usize,
@@ -133,14 +132,10 @@ pub fn spawn_kernel_task_with_arg(
     drop(rq);
     
     let id = task.id;
-    RUNQUEUES[cpu].lock().insert(task);
+    RUNQUEUES[cpu].lock().spawn_task(task); // Use spawn_task
     id
 }
 
-/// Spawns a new kernel task from a Rust closure.
-///
-/// This safely boxes the closure, passes it as a raw pointer to a trampoline,
-/// executes it, and then cleanly exits the thread.
 pub fn spawn_closure_task<F>(
     closure: F,
     priority: Priority,
@@ -155,10 +150,8 @@ where
     let arg = Box::into_raw(boxed) as usize;
 
     fn trampoline<F: FnOnce() + Send + 'static>(arg: usize) {
-        // Reconstruct the Box to take ownership and automatically free it on exit
         let closure = unsafe { Box::from_raw(arg as *mut F) };
         closure();
-        // Terminate the subscriber thread cleanly
         exit(0);
     }
 
@@ -220,11 +213,12 @@ pub fn sleep(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap();
-    if let Some(mut task) = rq.remove(current_id) {
-        task.state = TaskState::Sleeping;
-        wq.lock().sleep(task.id);
-        rq.insert(task);
-    }
+    rq.clear_current();
+    
+    // Properly remove from scheduling trees but keep in tasks map
+    rq.sleep_task(current_id);
+    wq.lock().sleep(current_id);
+    
     drop(rq);
     yield_now();
 }
@@ -232,10 +226,9 @@ pub fn sleep(wq: &Nutex<WaitQueue>) {
 pub fn wakeup(wq: &Nutex<WaitQueue>) {
     let cpu = crate::arch::current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
-    if let Some(task_id) = wq.lock().wakeup_one()
-        && let Some(mut task) = rq.remove(task_id) {
-        task.state = TaskState::Runnable;
-        rq.insert(task);
+    if let Some(task_id) = wq.lock().wakeup_one() {
+        // Apply Lag Decay and re-insert into scheduling trees
+        rq.wakeup_task(task_id);
     }
 }
 
@@ -397,7 +390,7 @@ pub fn native_syscall_handler(frame: &mut TrapFrame) {
         }
         _ => {
             crate::warn!("[Native SFD] Unknown syscall: {}", frame.rax);
-            frame.rax = u64::MAX; // -ENOSYS
+            frame.rax = u64::MAX; 
         }
     }
 }
@@ -426,7 +419,6 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
         None => panic!("Page fault in unknown context (no current process)"),
     };
 
-    // Copy‑on‑Write
     if is_present && is_write {
         let ptm = proc.address_space.lock();
         if let Some((paddr, flags)) = ptm.query(addr & !0xFFF)
@@ -448,7 +440,6 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
         }
     }
 
-    // Demand paging
     if !is_present {
         let vmm = proc.vmm.lock();
         if let Some(vma) = vmm.find_overlap(addr) {
@@ -483,7 +474,6 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, _is_user: bool)
 // ============================================================================
 // NVDL PUBLIC API
 // ============================================================================
-/// Promotes or demotes a task to/from the NVDL real-time runqueue (Green Corridor).
 pub fn set_rt_deadline(task_id: TaskId, deadline_ms: u64) {
     for cpu in 0..crate::arch::num_cpus() {
         let mut rq = RUNQUEUES[cpu].lock();
