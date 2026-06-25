@@ -74,6 +74,7 @@ fn select_page_size(vaddr: usize, paddr: Paddr, size: usize) -> PageSize {
     }
 }
 
+#[derive(Debug)]
 pub struct Polen {
     pub exco: Exco,
 }

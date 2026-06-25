@@ -24,7 +24,7 @@ lazy_static! {
             }
         }
         
-        info!("KDM: Initialized. HHDM offset: {:#X}", *HHDM);
+        info!("Initialized, offset: {:#X}", *HHDM);
         
         regions
     };

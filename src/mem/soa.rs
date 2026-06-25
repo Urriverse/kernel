@@ -233,7 +233,7 @@ impl Soa {
 static mut SOA_INSTANCE: Soa = Soa::new();
 
 pub fn init() {
-    info!("SOA: Initialized with immediate shrink ({} classes)", CLASS_SIZES.len());
+    info!("Initialized");
 }
 
 #[allow(static_mut_refs)]

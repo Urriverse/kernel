@@ -7,6 +7,7 @@ use crate::sync::Litex;
 use crate::vfs::InodeId;
 
 /// Mount point registry for a process.
+#[derive(Debug)]
 pub struct RootReg(Litex<BTreeMap<String, InodeId>>);
 
 #[allow(dead_code)]

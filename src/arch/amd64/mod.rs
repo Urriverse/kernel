@@ -289,13 +289,7 @@ pub fn early_init() {
 
     let pcpu = percpu::current();
     pcpu.cpu_id = cpu_id;
-
-    crate::info!(
-        "APIC ID = {}, RDPID = {}",
-        apic_id,
-        if rdpid_ok { "yes" } else { "no" }
-    );
-
+    
     if cpu_id > MAX_CPUS - 1 {
         error!("Too high CPU detected. Gonna sleep (Zzz...)");
         unsafe {
@@ -335,20 +329,24 @@ pub fn init_bsp() {
     percpu::init();
     gdt::init_bsp();
     idt::init_bsp();
-    percpu::init_syscall_gs(0, 0);
+    
+    // Use the current BSP boot stack as the temporary kernel stack top
+    let current_rsp: usize;
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+    percpu::init_syscall_gs(0, current_rsp);
 }
 
-/// Full initialization for APs.
-///
-/// This function is called on each AP after waiting for `ARCH_INIT`.
-/// It initializes:
-/// - GDT (`gdt::init_ap`)
-/// - IDT (`idt::init_ap`) – reuses the BSP's IDT
-/// - Per‑CPU GS base (`percpu::init_syscall_gs`)
 pub fn init_ap() {
-    gdt::init_ap(current_cpu());
+    let cpu = current_cpu();
+    gdt::init_ap(cpu);
     idt::init_ap();
-    percpu::init_syscall_gs(0, 0);
+    
+    // CRITICAL FIX: 
+    // 1. Pass the correct `cpu` ID instead of hardcoding 0.
+    // 2. Pass the current RSP instead of 0 so interrupts have a valid stack.
+    let current_rsp: usize;
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+    percpu::init_syscall_gs(cpu, current_rsp);
 }
 
 /// Late initialization for the BSP.
@@ -370,11 +368,6 @@ pub fn late_init_bsp() {
 pub fn late_init() {
     acpi::init();
     syscall::init();
-    unsafe {
-        core::arch::asm! {
-            "sti"
-        }
-    }
 }
 
 // ============================================================================

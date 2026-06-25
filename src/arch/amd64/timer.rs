@@ -47,9 +47,7 @@
 //! - The calibration function spins with interrupts disabled; this is safe
 //!   because it is called before interrupts are enabled.
 
-use core::hint::unlikely;
-use core::sync::atomic::{compiler_fence, Ordering::SeqCst as CompilerOrdering};
-use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::Nutex};
+use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::{Mutex, Nutex}};
 use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -59,6 +57,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 /// The number of APIC timer ticks per 10 ms, calibrated at boot.
 static TICKS_PER_10MS: AtomicU64 = AtomicU64::new(0);
+static CALIBRATED_TICKS: AtomicU64 = AtomicU64::new(0);
 
 // ============================================================================
 // TIMER WRAPPER (NAKED INTERRUPT HANDLER)
@@ -202,8 +201,6 @@ pub fn init_bsp() {
     let hpet_info = acpi::HpetInfo::new(&super::acpi::TABLES).expect("Failed to parse HPET table");
     let hpet_base_paddr = hpet_info.base_address;
 
-    info!("HPET found at physical address: {:p}", hpet_base_paddr as *const ());
-
     match crate::mem::PTM.lock().map_4k_block(
         HPET_VMA,
         Paddr::from_raw(hpet_base_paddr),
@@ -221,98 +218,55 @@ pub fn init_bsp() {
 // APIC TIMER CALIBRATION AND INITIALISATION
 // ============================================================================
 
-/// Calibrates and initialises the APIC timer on all CPUs.
-///
-/// This function is called from `acpi::init()` after the HPET is mapped.
-/// It performs the calibration on the BSP (CPU 0) and sets the APIC timer
-/// to periodic mode with the calibrated count.
-///
-/// The calibration process:
-/// 1. Reads the HPET period (in femtoseconds) from the capabilities register.
-/// 2. Computes the number of HPET ticks in 1 second.
-/// 3. Disables and resets the HPET.
-/// 4. Sets the APIC timer to one‑shot mode with a maximum count.
-/// 5. Enables the HPET and spins until 1 second has elapsed.
-/// 6. Reads the remaining APIC timer count and computes elapsed ticks.
-/// 7. Stores the elapsed ticks in `TICKS_PER_10MS` (dividing by 100).
-/// 8. Sets the APIC timer to periodic mode and the initial count.
-///
-/// # Panics
-/// - If the HPET period is zero (should never happen).
-/// - If the calibration fails (e.g., the APIC timer does not fire).
-///
-/// # Safety
-/// This function performs MMIO and MSR writes. It is called with interrupts
-/// disabled and is single‑threaded on the BSP.
-pub fn init() {
-    // Sync guaranteed, so we can temporarily go direct (no sync primitives).
+pub fn calibrate() {
     let inst = Hpet;
     let lapic = super::acpi::lapic::LocalApic;
 
-    // Read the HPET period from the capabilities register.
     let cap = inst.cap();
-
     let period_fs = cap >> 32;
+    if period_fs == 0 { panic!("HPET period is 0"); }
 
-    if unlikely(period_fs == 0) {
-        panic!("HPET period is 0, cannot calibrate!")
-    }
-
-    // Target: 1 second (10^12 femtoseconds).
     let target_fs = 1_000_000_000_000u64;
     let hpet_ticks_to_wait = target_fs / period_fs;
 
-    // Prepare the APIC timer.
     inst.disable();
-
-    compiler_fence(CompilerOrdering);
-
     inst.reset();
-
-    compiler_fence(CompilerOrdering);
-
-    // Set divisor to x16 (code 3) and timer to one‑shot mode.
+    
     *lapic.div() = 3;               // x16
-    *lapic.lvt_timer() = 0x00010000; // oneshot, masked initially
-    *lapic.icr() = !0;              // maximum initial value
+    *lapic.lvt_timer() = 0x00010000; // oneshot, masked
+    *lapic.icr() = !0;              // max value
 
-    compiler_fence(CompilerOrdering);
-
-    // Start the HPET.
     inst.enable();
-
-    compiler_fence(CompilerOrdering);
-
-    // Wait for the HPET to reach the target count.
-    let start_hpet = *inst.counter();;
-
+    let start_hpet = *inst.counter();
+    
+    // Wait 1 second
     loop {
-        // don't `pause`: we want more precise callibration. CPU
-        // const is acceptable as loop is not too long (apx. 10ms).
-        // core::hint::spin_loop();
-        compiler_fence(CompilerOrdering);
-
-        if (*inst.counter() - start_hpet) < hpet_ticks_to_wait { break }
+        core::hint::spin_loop();
+        if (*inst.counter() - start_hpet) >= hpet_ticks_to_wait { break; }
     }
-
     inst.disable();
 
-    compiler_fence(CompilerOrdering);
-
-    // Read the remaining APIC timer count and compute elapsed ticks.
     let cur_lapic = *lapic.ccr();
-
     let elapsed = !0 - cur_lapic;
 
-    // Store the number of ticks per 10 ms (for the scheduler).
-    TICKS_PER_10MS.store(elapsed as u64, Ordering::Relaxed);
+    // Store globally for all CPUs to use
+    CALIBRATED_TICKS.store(elapsed as u64, Ordering::Release);
+    TICKS_PER_10MS.store(elapsed as u64 / 100, Ordering::Release); // Ticks per 10ms
+    info!("APIC timer calibrated: {} ticks per 10ms", elapsed as u64 / 100);
+}
 
-    info!("APIC timer calibrated: {} ticks per 10ms", elapsed);
+static TIMER_SEQ: Mutex<()> = Mutex::new(());
+
+/// Programs the local APIC timer on ALL CPUs (BSP + APs) using the BSP's calibration.
+pub fn init() {
+    let _ = TIMER_SEQ.lock();
+    let lapic = super::acpi::lapic::LocalApic;
+    let elapsed = CALIBRATED_TICKS.load(Ordering::Acquire);
 
     // Set the APIC timer to periodic mode with the calibrated count.
+    *lapic.div() = 3; // x16
     *lapic.lvt_timer() = (1 << 17) | (crate::arch::idt::TIMER_VECTOR as u32); // periodic
-
-    *lapic.icr() = elapsed;
+    *lapic.icr() = elapsed as u32;
 }
 
 // ============================================================================

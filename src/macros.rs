@@ -225,9 +225,14 @@ macro_rules! entry
             info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
             $($b)*
             __LAST.open();
-            $crate::sched::yield_now();
+            // $crate::sched::yield_now();
+            $crate::sched::exit(100);
             loop {
-                unsafe { core::arch::asm!("hlt"); }
+                unsafe {
+                    core::arch::asm! {
+                        "hlt"
+                    }
+                }
             }
         }
     }

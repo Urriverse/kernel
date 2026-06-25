@@ -67,6 +67,8 @@
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
+use core::ptr::addr_of;
+
 use alloc::{string::ToString, sync::Arc};
 use sched::current_process;
 
@@ -139,7 +141,9 @@ pub mod ebus;
 // - `MEM_INIT`  – memory management initialized
 // - `LATE_INIT` – late architecture init
 // - `DEV_INIT`  – device model initialized
-barrier! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT }
+barrier! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT SCHED_INIT }
+
+limine! { MODULES <= ModulesRequest }
 
 // ============================================================================
 // KERNEL ENTRY POINT (BSP + AP)
@@ -215,20 +219,18 @@ entry! {
         let ticks_per_10ms = arch::timer::get_ticks_per_10ms();
         sched::init(ticks_per_10ms);
 
-        // --------------------------------------------------------------------
-        // PHASE 7: Event Bus Initialization (EBus)
-        // --------------------------------------------------------------------
-        ebus::init();
+        unsafe { core::arch::asm! { "sti" } }
+
+        SCHED_INIT.open();
 
         // --------------------------------------------------------------------
-        // PHASE 8: Spawn Initial Kernel Tasks (BSP)
+        // PHASE 7: Spawn the reaper task
         // --------------------------------------------------------------------
 
-        // Spawn the reaper task – reaps zombie processes
         let _ = sched::spawn_kernel_task(
-            reaper,
-            sched::task::Priority(-1),
-            "reaper",
+            init,
+            sched::task::Priority(0),
+            "init",
             Some(
                 vfs::RootRef::new(
                     vfs::RootReg::new()
@@ -236,6 +238,14 @@ entry! {
             ),
             None
         );
+
+        loop {
+            crate::info!("waiting for any child to exit...");
+            if let Some((id, task)) = sched::wait_any() {
+                crate::debug!("X: {:p}", addr_of!(*task));
+                crate::info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
+            }
+        }
     }
 
     for AP {
@@ -266,45 +276,38 @@ entry! {
 
         // Wait for BSP to complete device init
         DEV_INIT.wait();
+
+        SCHED_INIT.wait();
+
+        unsafe {
+            core::arch::asm! {
+                "sti"
+            }
+        }
     }
 }
 
-fn _vfs_test() {
-    warn!("1");
+fn vfs_test() {
     // Create PVFS instance
     let pvfs = Arc::new(vfs::Pvfs::new());
-    warn!("2");
     let mb_id = vfs::register_mblock(pvfs.clone() as Arc<dyn vfs::FileSystem>);
-    warn!("3");
     let mb = vfs::get_mblock(mb_id).unwrap();
-    warn!("4");
     // Create root directory
     let root_inode = vfs::Inode::default();
-    warn!("5");
     let root_id = vfs::new(&mb, root_inode, vfs::Kind::Directory).expect("Failed to create root dir");
-    warn!("6");
     // Mount it as "root" in the process namespace
     let roots = current_process().expect("NOPID").roots.clone();
-    warn!("7");
     roots.mount_new("root".to_string(), root_id).expect("Mount failed");
-    warn!("8");
     // Create a file
     let file_inode = vfs::Inode::default();
-    warn!("9");
     let file_id = vfs::new(&mb, file_inode, vfs::Kind::File).expect("Failed to create file");
-    warn!("10");
     // Link it into root
     vfs::link(&mb, root_id, "testfile", file_id).expect("Link failed");
-    warn!("11");
     // Write and read back
     vfs::write(&mb, file_id, 0, b"[NOT FAILED]").expect("Write failed");
-    warn!("12");
     let mut buf = *b"[FAILED]    ";
-    warn!("13");
     let n = vfs::read(&mb, file_id, 0, &mut buf).expect("Read failed");
-    warn!("14");
     debug!("vfs test: {}", str::from_utf8(&buf[..n]).unwrap());
-    warn!("15");
     sched::exit(0);
 }
 
@@ -319,11 +322,20 @@ fn _vfs_test() {
 /// # Note
 /// This is a kernel task and never exits; it runs forever to ensure no
 /// zombies accumulate.
-fn reaper() {
-    loop {
-        crate::info!("waiting for any child to exit...");
-        if let Some((id, task)) = sched::wait_any() {
-            crate::info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
-        }
-    }
+fn init() {
+    let _ = sched::spawn_kernel_task(
+        vfs_test,
+        sched::task::Priority(0),
+        "VFS test",
+        Some(
+            vfs::RootRef::new(
+                vfs::RootReg::new()
+            )
+        ),
+        None
+    );
+
+    ebus::init();
+
+    sched::exit(0);
 }

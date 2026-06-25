@@ -288,7 +288,7 @@ pub fn init() {
     }
 
     info!(
-        "PFM: Initialized. Max PFN: {}, Sections allocated: {}, Max Sections: {}",
+        "Initialized. Max PFN: {}, Sections allocated: {}, Max Sections: {}",
         max_pfn, allocated_sections, max_sec
     );
 }

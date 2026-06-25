@@ -347,7 +347,7 @@ static REGISTRY: Nutex<Registry> = Nutex::new(Registry::new());
 ///
 /// Currently a no‑op, but called from `main()` to mark the subsystem as ready.
 pub fn init() {
-    info!("Device model initialized");
+    info!("Initialized");
 }
 
 /// Registers a new device with the system.

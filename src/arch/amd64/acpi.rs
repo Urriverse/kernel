@@ -143,6 +143,7 @@ pub const SPURIOUS_VECTOR: u8 = 0xFF;
 pub fn init_bsp() {
     lapic::init();
     timer::init_bsp();
+    timer::calibrate();
 }
 
 /// Initialises the APIC and timer on all CPUs (BSP and APs).
@@ -202,9 +203,9 @@ pub enum DeliveryMode {
 }
 
 /// Constants for the Interrupt Command Register (ICR).
-#[allow(dead_code)] pub const ICR_LEVEL_ASSERT:  u32 = 1 << 14;   // Assert the interrupt (vs. deassert).
-#[allow(dead_code)] pub const ICR_DEST_MODE_PHYS: u32 = 0 << 11;  // Physical destination mode (APIC ID).
-#[allow(dead_code)] pub const ICR_DEST_MODE_LOG:  u32 = 1 << 11;  // Logical destination mode.
+pub const ICR_LEVEL_ASSERT:  u32 = 1 << 14;   // Assert the interrupt (vs. deassert).
+pub const ICR_DEST_MODE_PHYS: u32 = 0 << 11;  // Physical destination mode (APIC ID).
+pub const ICR_DEST_MODE_LOG:  u32 = 1 << 11;  // Logical destination mode.
 
 /// Sends an IPI to a target APIC ID.
 ///
@@ -219,7 +220,6 @@ pub enum DeliveryMode {
 /// * `vector` – The interrupt vector to deliver.
 /// * `mode` – The delivery mode.
 #[inline]
-#[allow(dead_code)]
 pub fn send_ipi(target_apic_id: u32, vector: u8, mode: DeliveryMode) {
     let lapic = lapic::LocalApic::new();
 
@@ -248,7 +248,6 @@ pub fn send_ipi(target_apic_id: u32, vector: u8, mode: DeliveryMode) {
 /// * `target_apic_id` – The APIC ID of the target CPU.
 /// * `vector` – The interrupt vector to deliver.
 #[inline]
-#[allow(dead_code)]
 pub fn send_fixed_ipi(target_apic_id: u32, vector: u8) {
     send_ipi(target_apic_id, vector, DeliveryMode::Fixed);
 }

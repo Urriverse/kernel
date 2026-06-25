@@ -505,6 +505,7 @@ pub fn walk_entry(
 
 /// A page table (4 KiB aligned array of 512 entries).
 #[repr(align(4096))]
+#[derive(Debug)]
 pub struct Tab(pub [Entry; 512]);
 
 impl Tab {
@@ -562,6 +563,7 @@ impl core::fmt::Display for Area {
 ///
 /// This struct holds the CR3 value and a reference to the root PML4 table.
 /// It provides methods for mapping, unmapping, and other page table operations.
+#[derive(Debug)]
 pub struct Exco {
     pub cr3: u64,
     pub root: &'static mut Tab,
@@ -983,6 +985,53 @@ impl Exco {
         unsafe {
             core::arch::asm!("mov cr3, {}", in(reg) self.cr3, options(nostack, preserves_flags));
         }
+    }
+
+    fn free_table_recursive(table: &mut Tab, level: u8) {
+        for i in 0..512 {
+            let entry = &mut table.0[i];
+            if entry.is_present() {
+                if is_huge(entry) {
+                    // Huge page: just clear the entry. 
+                    // The physical memory is managed by the VMM/Process.
+                    *entry = Entry::default();
+                } else if level > 1 {
+                    // Points to another page table
+                    let child = tab_from_entry(entry);
+                    Self::free_table_recursive(child, level - 1);
+                    free_tab(entry.address());
+                    *entry = Entry::default();
+                } else {
+                    // Level 1 (PT): Points to 4K physical pages.
+                    // We only free the PT structure, not the mapped physical pages 
+                    // (those are freed by the VMM when the Process drops).
+                    *entry = Entry::default();
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Exco {
+    fn drop(&mut self) {
+        if !self.owned {
+            return; // Do not free kernel/shared page tables
+        }
+
+        // Free user-space page tables (PML4 indices 0..256)
+        for i in 0..256 {
+            let pml4_entry = &mut self.root.0[i];
+            if pml4_entry.is_present() && !is_huge(pml4_entry) {
+                let pdpt = tab_from_entry(pml4_entry);
+                Self::free_table_recursive(pdpt, 3);
+                free_tab(pml4_entry.address());
+            }
+            *pml4_entry = Entry::default();
+        }
+        
+        // Free the root PML4 table itself
+        let root_paddr = Vaddr::from_ref(&*self.root).to_phys();
+        free_tab(root_paddr);
     }
 }
 

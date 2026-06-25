@@ -5,7 +5,7 @@ use crate::sync::{Nutex, Nitex};
 use crate::arch;
 use heapless::Vec;
 
-pub const MAX_ORDER: usize = 10;
+pub const MAX_ORDER: usize = 16;
 
 const PCP_SIZE: usize = 32;
 
@@ -97,6 +97,8 @@ impl PerCpuCache {
             pages: [
                 Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
                 Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                Vec::new(),
             ],
         }
     }
@@ -205,8 +207,6 @@ fn log2_ceil(n: usize) -> usize {
 }
 
 pub fn init() {
-    info!("Initializing BSA");
-
     for zone in &ZONES {
         zone.init_pcp();
     }
@@ -250,11 +250,9 @@ pub fn init() {
         };
 
         info!(
-            "Zone {} initialized: PFN {} - {} ({} pages)",
-            zone_name,
+            "Initialized {} - {}",
             start,
             end,
-            end.saturating_sub(start)
         );
     }
 
@@ -281,12 +279,6 @@ pub fn init() {
                 );
             }
         }
-        info!(
-            "Marked {} EMA pages as RESERVED (PFN {} - {})",
-            ema_end_pfn - ema_start_pfn,
-            ema_start_pfn,
-            ema_end_pfn
-        );
     }
 
     for region in pmr::iter() {
@@ -340,10 +332,7 @@ pub fn init() {
     }
 
     let stats = usage();
-    info!(
-        "Initialized. Free pages: DMA={}, DMA32={}, Normal={}",
-        stats[0], stats[1], stats[2]
-    );
+    info!("Initialized");
 }
 
 pub fn alloc(count: usize) -> Paddr {
@@ -377,7 +366,8 @@ pub fn alloc(count: usize) -> Paddr {
         }
     }
 
-    error!("Out of memory (requested {} pages)", count);
+    #[cfg(debug_assertions)] panic!("Out of memory (requested {} pages)", count);
+    #[cfg(not(debug_assertions))] error!("Out of memory (requested {} pages)", count);
     Paddr::from_raw(0)
 }
 

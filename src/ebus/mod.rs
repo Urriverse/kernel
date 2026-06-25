@@ -135,6 +135,7 @@ fn dispatch_event(event: Event, affinity: Option<usize>) {
 // WORKER TASKS (Pure Dispatchers)
 // ============================================================================
 fn global_worker() {
+    info!("Started global worker");
     loop {
         sched::sleep(&GLOBAL_WQ);
         let mut start_time = arch::get_time_from_boot();
@@ -159,6 +160,8 @@ fn cpu_worker() {
         )
     };
 
+    info!("Started per-CPU worker");
+
     loop {
         sched::sleep(wq);
         let mut start_time = arch::get_time_from_boot();
@@ -178,6 +181,7 @@ fn cpu_worker() {
 // ============================================================================
 pub fn init() {
     if INITIALIZED.swap(true, Ordering::AcqRel) {
+        error!("Already initialized");
         return;
     }
 
@@ -204,6 +208,8 @@ pub fn init() {
         None,
         None,
     );
+
+    info!("Initialized");
 }
 
 #[allow(dead_code)]

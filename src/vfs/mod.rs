@@ -4,11 +4,13 @@ mod inode;
 mod root;
 mod pvfs;
 mod err;
+mod rotar;
 
 pub use fs::*;
 pub use inode::*;
 pub use root::*;
 pub use err::*;
+pub use rotar::*;
 #[allow(unused_imports)]
 pub use pvfs::*;
 

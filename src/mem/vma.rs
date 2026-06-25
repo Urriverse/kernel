@@ -99,6 +99,7 @@ fn update_augmentation(node: &mut NonNull<VmaNode>) {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 struct VmaTree {
     root: Option<NonNull<VmaNode>>,
     cached_hint: usize,
@@ -503,6 +504,7 @@ impl VmaTree {
     }
 }
 
+#[derive(Debug)]
 pub struct Vmm {
     tree: Nutex<VmaTree>,
 }

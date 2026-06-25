@@ -72,5 +72,5 @@ pub fn set_soa() {
         Ok(_) => {}
         Err(_) => panic!("Global allocator already set"),
     }
-    info!("gall: switched to SOA backend");
+    info!("Initialized");
 }

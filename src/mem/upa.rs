@@ -50,8 +50,8 @@ pub fn migrate() {
         .compare_exchange(expected, new, Ordering::SeqCst, Ordering::Relaxed)
         .is_err()
     {
-        panic!("UPA already migrated");
+        panic!("Already migrated");
     }
 
-    info!("UPA migrated to BSA backend");
+    info!("Migrated");
 }

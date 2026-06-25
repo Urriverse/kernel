@@ -346,8 +346,6 @@ fn set_entry_options(entry: &mut EntryOptions, ist_index: Option<u16>) {
 /// This function modifies the global IDT and performs `lidt`. It is called
 /// during early boot with interrupts disabled.
 pub fn init_bsp() {
-    info!("Initializing exception handlers for BSP...");
-
     #[allow(static_mut_refs)]
     let idt = unsafe { &mut GLOBAL_IDT };
 
@@ -397,7 +395,7 @@ pub fn init_bsp() {
     // Load the IDT.
     idt.load();
 
-    info!("Loaded successfully on BSP.");
+    info!("Initialized");
 }
 
 /// Initialises the IDT for an AP (Application Processor).
@@ -407,8 +405,7 @@ pub fn init_bsp() {
 /// # Safety
 /// This function performs `lidt` and is called during AP boot with interrupts disabled.
 pub fn init_ap() {
-    info!("Loading for AP...");
     #[allow(static_mut_refs)]
     unsafe { GLOBAL_IDT.load() }
-    info!("Loaded successfully on AP.");
+    info!("Initialized");
 }

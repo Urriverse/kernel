@@ -380,7 +380,6 @@ pub fn set_ist(cpu_id: usize, ist_index: usize, stack_top: u64) {
 /// # Safety
 /// This is called during early boot with interrupts disabled.
 pub fn init_bsp() {
-    info!("Initializing for BSP (CPU#0)");
     unsafe {
         #[allow(static_mut_refs)]
         GLOBAL_GDT.set_tss(0, &raw const TSS_TABLE[0]);
@@ -393,7 +392,7 @@ pub fn init_bsp() {
             options(nostack, preserves_flags)
         );
     }
-    info!("BSP initialized successfully.");
+    info!("Initialized");
 }
 
 /// Initializes the GDT and TSS for an Application Processor (AP).
@@ -412,7 +411,6 @@ pub fn init_bsp() {
 /// # Safety
 /// This is called during AP boot with interrupts disabled.
 pub fn init_ap(cpu_id: usize) {
-    info!("Initializing for AP (CPU#{})", cpu_id);
 
     unsafe {
         #[allow(static_mut_refs)]
@@ -427,5 +425,5 @@ pub fn init_ap(cpu_id: usize) {
         );
     }
 
-    info!("AP initialized successfully (Selector: {:#X})", tss_selector(cpu_id));
+    info!("Initialized");
 }

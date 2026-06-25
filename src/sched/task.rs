@@ -1,5 +1,5 @@
 // src/sched/task.rs
-use crate::{arch::trap::TrapFrame, sched::proc::Process};
+use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, proc::Process}};
 use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::{boxed::Box, sync::Arc};
 
@@ -21,7 +21,6 @@ pub struct Priority(pub i32);
 
 impl Priority {
     pub const fn nice_to_weight(nice: i32) -> u64 {
-        // weight = 1024 * 1.25^(-nice)
         const WEIGHTS: [u64; 40] = [
             88761, 71755, 58481, 46236, 37617, 30483, 24513, 19862,
             16124, 13031, 10550, 8546, 6912, 5594, 4519, 3659,
@@ -34,7 +33,7 @@ impl Priority {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct Task {
     pub id: TaskId,
@@ -42,19 +41,16 @@ pub struct Task {
     pub vruntime: u64,
     pub deadline: u64,
     pub weight: u64,
-    pub slice: u64,           // Requested time slice in virtual ticks
+    pub slice: u64,
     pub ctx: Context,
-    pub kernel_stack: usize,  // Top of kernel stack for this task
-    pub user_stack: usize,    // Top of user stack (if user task)
-    pub cpu_affinity: Option<usize>,  // None = any CPU
+    pub kernel_stack: usize,
+    pub user_stack: usize,
+    pub cpu_affinity: Option<usize>,
     pub name: &'static str,
     pub parent: Option<TaskId>,
     pub exit_code: i32,
     pub process: Arc<Process>,
     pub kernel_stack_top: usize,
-    
-    /// NVDL: Absolute real-time deadline in ms (from boot). 
-    /// 0 = normal EEVDF task, >0 = Real-Time task in the Green Corridor.
     pub rt_deadline: u64, 
 }
 
@@ -67,7 +63,7 @@ pub struct Context {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FpuState {
-    pub area: [u8; 512],  // FXSAVE area (SSE/SSE2)
+    pub area: [u8; 512],
     pub initialized: bool,
 }
 
@@ -82,8 +78,17 @@ impl Default for FpuState {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
+fn spur() {
+    // Safely grab the task name without causing lock contention/panics
+    let task_name = {
+        let rq = super::rq::RUNQUEUES[current_cpu()].lock();
+        rq.current_task().map(|t| t.name).unwrap_or("unknown")
+    };
+    __panic_msg!("Task \"{}\" didn't call `exit`", task_name);
+    sched::exit(-3);
+}
+
 impl Task {
-    /// Standard kernel task spawner (no arguments).
     pub fn new_kernel(
         entry: fn(),
         kernel_stack_top: usize,
@@ -94,13 +99,13 @@ impl Task {
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
-            *(initial_rsp as *mut u64) = 0;
+            *(initial_rsp as *mut u64) = spur as *const () as u64;
         }
         frame.rip = entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
-        frame.cs = 0x08;  // KERNEL_CODE_SELECTOR
-        frame.ss = 0x10;  // KERNEL_DATA_SELECTOR
-        frame.rflags = 0x202;  // IF=1
+        frame.cs = 0x08;
+        frame.ss = 0x10;
+        frame.rflags = 0x202;
         
         Box::new(Self {
             id,
@@ -109,10 +114,7 @@ impl Task {
             deadline: 0,
             weight: Priority::nice_to_weight(priority.0),
             slice: 10_000,
-            ctx: Context {
-                frame,
-                fpu_state: FpuState::default(),
-            },
+            ctx: Context { frame, fpu_state: FpuState::default() },
             kernel_stack: kernel_stack_top,
             user_stack: 0,
             cpu_affinity: None,
@@ -120,12 +122,11 @@ impl Task {
             parent: None,
             exit_code: -1,
             process: Arc::new(Process::new()),
-            kernel_stack_top: kernel_stack_top, // FIXED: Was 0 originally
+            kernel_stack_top: kernel_stack_top, // Correctly assigned
             rt_deadline: 0,
         })
     }
 
-    /// Kernel task spawner that accepts a single `usize` argument via RDI.
     pub fn new_kernel_with_arg(
         entry: fn(usize),
         arg: usize,
@@ -137,14 +138,14 @@ impl Task {
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         let initial_rsp = kernel_stack_top - 8;
         unsafe {
-            *(initial_rsp as *mut u64) = 0;
+            *(initial_rsp as *mut u64) = spur as *const () as u64;
         }
         frame.rip = entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
-        frame.rdi = arg as u64; // Pass argument via RDI (System V AMD64 ABI)
-        frame.cs = 0x08;  
-        frame.ss = 0x10;  
-        frame.rflags = 0x202;  
+        frame.rdi = arg as u64;
+        frame.cs = 0x08;
+        frame.ss = 0x10;
+        frame.rflags = 0x202;
         
         Box::new(Self {
             id,
@@ -153,10 +154,7 @@ impl Task {
             deadline: 0,
             weight: Priority::nice_to_weight(priority.0),
             slice: 10_000,
-            ctx: Context {
-                frame,
-                fpu_state: FpuState::default(),
-            },
+            ctx: Context { frame, fpu_state: FpuState::default() },
             kernel_stack: kernel_stack_top,
             user_stack: 0,
             cpu_affinity: None,
