@@ -78,27 +78,33 @@ pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(Inod
 }
 
 /// Internal path resolution engine.
-/// 
-/// Uses a path stack to correctly resolve ".." without relying on `inode.parent`,
-/// which is strictly necessary to support hardlinks and correctly traverse back 
-/// across mount boundaries.
+///
+/// Supports the `mount_name:/path/to/file` syntax. If no `mount_name:` prefix 
+/// is provided, it defaults to looking up the `"root"` mount point.
 fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(InodeId, Arc<MetaBlock>), Error> {
-    let trimmed = path.trim_matches('/');
+    // 1. Parse the "mount_name:/path" syntax
+    let (mount_name, actual_path) = if let Some(pos) = path.find(':') {
+        (&path[..pos], &path[pos + 1..])
+    } else {
+        // Fallback to "root" if no mount name is specified
+        ("root", path)
+    };
+
+    let trimmed = actual_path.trim_matches('/');
     
-    let root_id = roots.lookup("root").ok_or(Error::NotMounted)?;
+    // 2. Lookup the root inode using the parsed mount name
+    let root_id = roots.lookup(mount_name).ok_or(Error::NotMounted)?;
     let root_mb = get_mblock(root_id.1).ok_or(Error::NoEntry)?;
-    
+
     if trimmed.is_empty() {
         return Ok((root_id, root_mb));
     }
-    
+
     let components: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
     
     // The path stack tracks our traversal context.
-    // This allows us to safely resolve ".." by simply popping the stack,
-    // completely avoiding the need for a `parent` pointer in the Inode.
     let mut path_stack: Vec<(InodeId, Arc<MetaBlock>)> = vec![(root_id, root_mb)];
-    
+
     for comp in components {
         if comp == "." {
             continue;
@@ -128,14 +134,13 @@ fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(Inod
                             next_id = child_id; // The ID acts as the root of the new FS
                         }
                     }
-                    
                     path_stack.push((next_id, next_mb));
                 }
                 None => return Err(Error::NoEntry),
             }
         }
     }
-    
+
     let (final_id, final_mb) = path_stack.last().unwrap();
     Ok((*final_id, final_mb.clone()))
 }

@@ -54,9 +54,7 @@
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
-use core::ptr::addr_of;
-
-use alloc::sync::Arc;
+use alloc::{string::ToString as _, sync::Arc};
 
 // ============================================================================
 // EXTERNAL CRATES
@@ -112,6 +110,9 @@ pub mod vfs;
 
 /// Event Bus (EBus) - asynchronous kernel communication subsystem
 pub mod ebus;
+
+/// Kernel Module Interface - kernel functions export mechanism
+pub mod kmi;
 
 // ============================================================================
 // SYNCHRONIZATION BARRIERS
@@ -270,11 +271,36 @@ entry! {
     }
 }
 
-fn vfs_test() {
-    // Create PVFS instance
-    let initramfs = Arc::new(vfs::Rotar::new(MODULES.response().expect("opps").modules()[0].data()));
+fn start_modules() {
+    // 1. Retrieve the initramfs module data from Limine
+    let modules = MODULES.response().expect("Failed to get Limine modules").modules();
+    if modules.is_empty() {
+        error!("No initramfs module found!");
+        sched::exit(1);
+    }
+    let initramfs_data = modules[0].data();
+    
+    // 2. Create the Rotar (Read-Only Tar) filesystem instance
+    let initramfs = Arc::new(vfs::Rotar::new(initramfs_data));
+    
+    // 3. Register it in the global VFS registry
     let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::FileSystem>);
-    let _mb = vfs::get_mblock(mb_id).unwrap();
+    initramfs.set_mb_id(mb_id);
+    
+    // 4. Create a RootReg and mount it under the custom name "irfs"
+    let roots = vfs::RootReg::new();
+    roots.mount("irfs".to_string(), vfs::InodeId(0, mb_id));
+
+    // 5. Resolve the file using the "irfs:/hello.txt" syntax!
+    let (root, mb) = match vfs::resolve_absolute(&roots, "irfs:/") {
+        Ok((iid, mb)) => { (iid, mb) },
+        Err(e) => panic!("Can't resolve root: {:?}", e),
+    };
+
+    for e in vfs::listdir(&mb, root) {
+        warn!("- {}", e.0);
+    }
+    
     sched::exit(0);
 }
 
@@ -292,27 +318,15 @@ fn vfs_test() {
 fn init() {
     ebus::init();
 
-    let _ = sched::spawn_kernel_task(
-        vfs_test,
-        sched::task::Priority(0),
-        "VFS test",
-        Some(
-            vfs::RootRef::new(
-                vfs::RootReg::new()
-            )
-        ),
-        None
-    );
+    start_modules();
 
     sched::exit(0);
 }
 
 fn reap() {
     loop {
-        warn!("waiting for any child to exit...");
         if let Some((id, task)) = sched::wait_any() {
-            debug!("X: {:p}", addr_of!(*task));
-            info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
+            trace!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
         }
     }
 }

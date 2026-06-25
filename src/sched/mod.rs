@@ -29,9 +29,7 @@ pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
 
     for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
-        trace!("CPU{}", cpu);
         let stack = allocate_kernel_stack(32 * 1024);
-        trace!("stack at {:p}", stack as *const());
         crate::arch::percpu::init_syscall_gs(cpu, stack);
 
         let boot = Task::new_kernel(||loop{}, addr_of!(SPUR) as usize + 64, Priority(0), "boot");
@@ -156,9 +154,9 @@ pub fn exit(code: i32) -> ! {
     let current_id = rq.current_task_id().unwrap();
     let mut task = rq.remove(current_id).unwrap();
 
-    let pid = task.process.pid;
+    // let pid = task.process.pid;
 
-    debug!("Exiting task \"{}\" (TID {} PID {}) with code {}", task.name, current_id.0, pid, code);
+    // debug!("Exiting task \"{}\" (TID {} PID {}) with code {}", task.name, current_id.0, pid, code);
 
     rq.clear_current();
 
@@ -174,7 +172,7 @@ pub fn exit(code: i32) -> ! {
     task.exit_code = code;
     TASK_REGISTRY.lock().insert(current_id, task);
 
-    crate::debug!("Task {} is now a zombie, waking up reaper...", current_id.0);
+    // crate::debug!("Task {} is now a zombie, waking up reaper...", current_id.0);
     wakeup(&EXIT_WQ);
 
     yield_now();
