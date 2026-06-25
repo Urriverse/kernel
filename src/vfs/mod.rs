@@ -22,47 +22,38 @@ use alloc::sync::Arc;
 // HIGH-LEVEL VFS OPERATIONS
 // ============================================================================
 
-#[allow(dead_code)]
 pub fn lookup(mb: &MetaBlock, dir: InodeId, name: &str) -> Option<InodeId> {
     mb.fs.lookup(dir, name)
 }
 
-#[allow(dead_code)]
 pub fn readdir(mb: &MetaBlock, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {
     mb.fs.readdir(dir, offset)
 }
 
-#[allow(dead_code)]
 pub fn read(mb: &MetaBlock, file: InodeId, offset: usize, buf: &mut [u8]) -> Result<usize, Error> {
     mb.fs.read(file, offset, buf)
 }
 
-#[allow(dead_code)]
 pub fn write(mb: &MetaBlock, file: InodeId, offset: usize, buf: &[u8]) -> Result<usize, Error> {
     mb.fs.write(file, offset, buf)
 }
 
-#[allow(dead_code)]
 pub fn truncate(mb: &MetaBlock, file: InodeId, new_size: usize) -> Result<(), Error> {
     mb.fs.truncate(file, new_size)
 }
 
-#[allow(dead_code)]
 pub fn unlink(mb: &MetaBlock, dir: InodeId, name: &str) -> Result<(), Error> {
     mb.fs.unlink(dir, name)
 }
 
-#[allow(dead_code)]
 pub fn link(mb: &MetaBlock, parent: InodeId, name: &str, child: InodeId) -> Result<(), Error> {
     mb.fs.link(parent, name, child)
 }
 
-#[allow(dead_code)]
 pub fn new(mb: &MetaBlock, inode: Inode, kind: Kind) -> Result<InodeId, Error> {
     mb.fs.new(mb.id, inode, kind)
 }
 
-#[allow(dead_code)]
 pub fn stat(mb: &MetaBlock, inode: InodeId) -> Option<Inode> {
     mb.fs.stat(inode)
 }
@@ -71,20 +62,17 @@ pub fn stat(mb: &MetaBlock, inode: InodeId) -> Option<Inode> {
 // PATH RESOLUTION
 // ============================================================================
 
-#[allow(dead_code)]
 pub fn is_mount_point(roots: &RootReg, id: InodeId) -> bool {
     roots.snapshot().values().any(|&v| v == id)
 }
 
 /// Resolve an absolute path from the root mount point named "root".
 /// Does not cross filesystem boundaries (mount points).
-#[allow(dead_code)]
 pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
     resolve_path(roots, path, false)
 }
 
 /// Resolve an absolute path, crossing filesystem boundaries when encountering mount points.
-#[allow(dead_code)]
 pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
     resolve_path(roots, path, true)
 }
@@ -156,7 +144,6 @@ fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(Inod
 // HELPER UTILITIES
 // ============================================================================
 
-#[allow(dead_code)]
 pub fn listdir(mb: &MetaBlock, dir: InodeId) -> alloc::collections::btree_map::BTreeMap<String, InodeId> {
     let mut map = alloc::collections::btree_map::BTreeMap::new();
     let mut offset = 0;
@@ -167,7 +154,6 @@ pub fn listdir(mb: &MetaBlock, dir: InodeId) -> alloc::collections::btree_map::B
     map
 }
 
-#[allow(dead_code)]
 pub fn read_to_string(mb: &MetaBlock, file: InodeId) -> Result<String, Error> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 512];

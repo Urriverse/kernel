@@ -77,16 +77,16 @@ use super::MAX_CPUS;
 // ============================================================================
 
 /// Kernel code segment selector (Ring 0, executable).
-#[allow(dead_code)] pub const KERNEL_CODE_SELECTOR: u16 = 0x08;
+pub const KERNEL_CODE_SELECTOR: u16 = 0x08;
 
 /// Kernel data segment selector (Ring 0, writable).
-#[allow(dead_code)] pub const KERNEL_DATA_SELECTOR: u16 = 0x10;
+pub const KERNEL_DATA_SELECTOR: u16 = 0x10;
 
 /// User code segment selector (Ring 3, executable).
-#[allow(dead_code)] pub const USER_CODE_SELECTOR: u16 = 0x18;
+pub const USER_CODE_SELECTOR: u16 = 0x18;
 
 /// User data segment selector (Ring 3, writable).
-#[allow(dead_code)] pub const USER_DATA_SELECTOR: u16 = 0x20;
+pub const USER_DATA_SELECTOR: u16 = 0x20;
 
 /// Returns the TSS segment selector for a given CPU.
 ///
@@ -351,7 +351,6 @@ pub fn set_kernel_stack(cpu_id: usize, stack_top: u64) {
 ///
 /// # Panics
 /// Panics if `cpu_id >= MAX_CPUS` or `ist_index` is not in 1..7.
-#[allow(dead_code)]
 pub fn set_ist(cpu_id: usize, ist_index: usize, stack_top: u64) {
     assert!(cpu_id < MAX_CPUS, "CPU ID {} exceeds MAX_CPUS", cpu_id);
     assert!((1..=7).contains(&ist_index), "IST index must be 1..=7");

@@ -27,6 +27,7 @@ struct TarHeader {
 }
 
 struct RotarNode {
+    #[allow(unused)]
     ino: u32,
     kind: Kind,
     size: u64,
@@ -38,6 +39,7 @@ struct RotarNode {
 pub struct Rotar {
     nodes: Litex<BTreeMap<u32, RotarNode>>,
     dirs: Litex<BTreeMap<u32, Vec<(String, u32)>>>,
+    #[allow(unused)]
     paths: Litex<BTreeMap<String, u32>>,
     data: &'static [u8],
     mb_id: Litex<u32>,

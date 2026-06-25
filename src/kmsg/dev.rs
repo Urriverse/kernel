@@ -1,3 +1,5 @@
+use core::sync::atomic::compiler_fence;
+
 use crate::{kmsg::{Sink, SinkAttrs, SinkIdent}, sync::Nutex};
 
 // cargo check: false positive
@@ -12,14 +14,23 @@ impl Dev
     {
         unsafe
         {
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 1, 0  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 3, 128);
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8    , 1  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 1, 0  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 3, 3  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 2, 7  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             x86::io::outb(0x3f8 + 4, 3  );
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
             let _ = x86::io::inb(0x3f8 + 5);
+            compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
         Self
     }
@@ -30,8 +41,7 @@ unsafe impl Sync for Dev {}
 // cargo check: false positive
 #[allow(unused)]
 static ID: u32 = super::str4_to_u32("DEV0");
-
-#[allow(dead_code)] pub static LOCK: Nutex<()> = Nutex::new(());
+ pub static LOCK: Nutex<()> = Nutex::new(());
 
 impl Sink for Dev
 {

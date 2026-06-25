@@ -209,33 +209,16 @@ macro_rules! entry
         lazy_static! {
             static ref SMP: &'static limine::request::Response<limine::request::MpRespData> = SMPR.response().expect("Can't obtain SMP info");
         }
-        
-        barrier!{__LAST}
         unsafe extern "C" fn ap_main(_: &limine::mp::MpInfo) -> !
         {
             unsafe { core::arch::asm! { "cli" } }
             $($a)*
-            __LAST.wait();
-            $crate::sched::yield_now();
-            loop {
-                unsafe { core::arch::asm!("hlt"); }
-            }
         }
         pub fn main() -> !
         {
             unsafe { core::arch::asm! { "cli" } }
             info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
             $($b)*
-            __LAST.open();
-            // $crate::sched::yield_now();
-            $crate::sched::exit(100);
-            loop {
-                unsafe {
-                    core::arch::asm! {
-                        "hlt"
-                    }
-                }
-            }
         }
     }
 }
@@ -263,7 +246,8 @@ macro_rules! entry
 /// ```
 #[macro_export]
 macro_rules! limine {
-    ($vis:vis $name:ident <= $type:ident $(:)? $($arg:expr),*) => {
+    ( $(#[$attr:meta])* $vis:vis $name:ident <= $type:ident $(:)? $($arg:expr),*) => {
+        $(#[$attr])*
         #[unsafe(link_section = ".requests")]
         $vis static $name: limine::request::$type = limine::request::$type::new($($arg),*);
     };
@@ -292,4 +276,15 @@ macro_rules! barrier {
     ( $($vis:vis $name:ident)+ ) => {
         $( #[allow(unused)] $vis static $name: $crate::sync::Barrier = $crate::sync::Barrier::new(); )+
     }
+}
+
+#[macro_export]
+macro_rules! no_interrupts {
+    { $($b:tt)* } => {
+        {
+            let ___ig = $crate::sync::Nitex::<()>::new(());
+            let _ = ___ig.lock();
+            $($b)*
+        }
+    };
 }

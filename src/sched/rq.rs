@@ -1,7 +1,7 @@
 //! # EEVDF Runqueue with NVDL & SMP Support
 use alloc::{boxed::Box, collections::{BTreeMap, BTreeSet}};
 use super::task::{Task, TaskId};
-use crate::{sched::task::TaskState, sync::Nutex}; // Changed to Nutex
+use crate::{sched::task::TaskState, sync::Nitex}; // Changed to Nutex
 
 const NICE_0_WEIGHT: u64 = 1024;
 
@@ -230,5 +230,5 @@ impl Runqueue {
 }
 
 // Changed from Litex to Nutex to allow safe cross-CPU locking for SMP balancing!
-pub static RUNQUEUES: [Nutex<Runqueue>; crate::arch::MAX_CPUS]
-=   [const { Nutex::new(Runqueue::new()) }; crate::arch::MAX_CPUS];
+pub static RUNQUEUES: [Nitex<Runqueue>; crate::arch::MAX_CPUS]
+=   [const { Nitex::new(Runqueue::new()) }; crate::arch::MAX_CPUS];

@@ -1,3 +1,5 @@
+use core::hint::unlikely;
+
 use crate::{mem::pmr::Kind, sync::Nutex};
 
 use super::{pmr::{self, Region}, kdm::Paddr};
@@ -45,7 +47,7 @@ impl EarlyMemAlloc
 
     pub(super) fn alloc(&mut self, count: usize) -> usize {
         let count = (count + 4095) & !4095;
-        if self.top < self.limit || self.top - count < self.limit {
+        if unlikely(self.top < self.limit || self.top - count < self.limit ){
             error!("EMA: out of memory (requested {} bytes)", count);
             return 0;
         }
@@ -76,7 +78,6 @@ pub fn alloc(count: usize) -> Paddr
     Paddr::from_raw(EMA.lock().alloc(count << 12))
 }
 
-#[allow(dead_code)]
 pub fn usage() -> usize
 {
     let ema = EMA.lock();

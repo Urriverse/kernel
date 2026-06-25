@@ -79,25 +79,27 @@ pub use ::acpi::platform::Processor;
 // LIMINE REQUEST FOR RSDP
 // ============================================================================
 
-/// Limine request for the RSDP (Root System Description Pointer).
-///
-/// The RSDP is the entry point to the ACPI tables. It is provided by the
-/// bootloader and is used by the ACPI library to parse all other tables.
-limine! { RSDP <= RsdpRequest }
+limine! {
+    /// Limine request for the RSDP (Root System Description Pointer).
+    ///
+    /// The RSDP is the entry point to the ACPI tables. It is provided by the
+    /// bootloader and is used by the ACPI library to parse all other tables.
+    RSDP <= RsdpRequest
+}
 
 // ============================================================================
 // LAZY‑STATIC ACPI TABLES
 // ============================================================================
 
-/// Parsed ACPI tables, lazily initialised from the RSDP.
-///
-/// The `AcpiTables` struct provides access to all ACPI tables (MADT, HPET,
-/// DSDT, FADT, etc.) and includes a handler (`Hdl`) for platform‑specific
-/// operations (memory mapping, I/O access).
-///
-/// # Panics
-/// Panics if the RSDP response is unavailable or if table parsing fails.
 lazy_static! {
+    /// Parsed ACPI tables, lazily initialised from the RSDP.
+    ///
+    /// The `AcpiTables` struct provides access to all ACPI tables (MADT, HPET,
+    /// DSDT, FADT, etc.) and includes a handler (`Hdl`) for platform‑specific
+    /// operations (memory mapping, I/O access).
+    ///
+    /// # Panics
+    /// Panics if the RSDP response is unavailable or if table parsing fails.
     pub static ref TABLES: acpi::AcpiTables<handler::Hdl> = unsafe {
         acpi::AcpiTables::from_rsdp(
             handler::Hdl,
@@ -186,7 +188,6 @@ pub fn eoi() {
 /// to specify the delivery semantics of the IPI.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum DeliveryMode {
     /// Deliver the interrupt to the target processor(s).
     Fixed        = 0b000 << 8,

@@ -10,7 +10,6 @@ use crate::vfs::InodeId;
 #[derive(Debug)]
 pub struct RootReg(Litex<BTreeMap<String, InodeId>>);
 
-#[allow(dead_code)]
 impl RootReg {
     pub fn new() -> Self {
         Self(Litex::new(BTreeMap::new()))

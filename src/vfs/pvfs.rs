@@ -25,7 +25,6 @@ pub struct Pvfs {
     nxt: Litex<u32>,                     // next free inode number
 }
 
-#[allow(dead_code)]
 impl Pvfs {
     pub fn new() -> Self {
         Self {

@@ -130,7 +130,6 @@ lazy_static! {
 ///
 /// # Returns
 /// `Some(Region)` if the index is valid, otherwise `None`.
-#[allow(dead_code)]
 pub fn nth(n: usize) -> Option<Region> {
     let o = MMAP.get(n);
     o.map(
@@ -152,7 +151,6 @@ pub fn nth(n: usize) -> Option<Region> {
 ///
 /// # Returns
 /// A `Region` struct.
-#[allow(dead_code)]
 pub fn nth_unchecked(n: usize) -> Region {
     let e = MMAP[n];
     Region {
@@ -170,7 +168,6 @@ pub fn iter() -> Iter {
 }
 
 /// Returns the total number of memory regions.
-#[allow(dead_code)]
 pub fn len() -> usize {
     MMAP.len()
 }
@@ -178,7 +175,6 @@ pub fn len() -> usize {
 /// Dumps all memory regions to the log (for debugging).
 ///
 /// This function logs each region's base, size, and type at the `debug` level.
-#[allow(dead_code)]
 pub fn dump() {
     debug!("Memory regions:");
     for r in iter() {

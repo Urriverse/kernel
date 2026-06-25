@@ -74,19 +74,19 @@ use crate::arch::{rdmsr, wrmsr};
 // ============================================================================
 
 /// Extended Feature Enable Register (EFER) – enables `syscall` in 64‑bit mode.
-#[allow(dead_code)] pub const IA32_EFER: u32 = 0xC0000080;
+pub const IA32_EFER: u32 = 0xC0000080;
 
 /// System Call Target Address Register (STAR) – holds the CS/SS selectors.
 /// - Upper 32 bits: Kernel CS (bits 32‑47) and Kernel SS (bits 48‑63).
 /// - Lower 32 bits: User CS (bits 0‑15) and User SS (bits 16‑31).
-#[allow(dead_code)] pub const IA32_STAR: u32 = 0xC0000081;
+pub const IA32_STAR: u32 = 0xC0000081;
 
 /// System Call Target Address Register (LSTAR) – holds the RIP of the syscall handler.
-#[allow(dead_code)] pub const IA32_LSTAR: u32 = 0xC0000082;
+pub const IA32_LSTAR: u32 = 0xC0000082;
 
 /// System Call Flag Mask (FMASK) – masks RFLAGS bits during `syscall`.
 /// We mask out TF (bit 8) and IF (bit 9) to disable single‑step and interrupts.
-#[allow(dead_code)] pub const IA32_FMASK: u32 = 0xC0000084;
+pub const IA32_FMASK: u32 = 0xC0000084;
 
 // ============================================================================
 // SYSCALL ENTRY (NAKED FUNCTION)
@@ -115,7 +115,6 @@ use crate::arch::{rdmsr, wrmsr};
 /// It must not be called directly; it is only invoked by the CPU via the
 /// `syscall` instruction.
 #[unsafe(naked)]
-#[allow(dead_code)]
 pub unsafe extern "C" fn syscall_entry() -> ! {
     naked_asm!(
         // --------------------------------------------------------------------
@@ -226,7 +225,6 @@ pub unsafe extern "C" fn syscall_entry() -> ! {
 /// # Safety
 /// This function uses `wrmsr` to write to privileged MSRs. It is called during
 /// early boot with interrupts disabled.
-#[allow(dead_code)]
 pub fn init() {
     // Enable the System Call Extensions (SCE) bit in EFER.
     let efer = unsafe { rdmsr(IA32_EFER) };

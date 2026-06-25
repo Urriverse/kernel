@@ -135,7 +135,6 @@ pub struct RwLock<T> {
 unsafe impl<T: Send> Send for RwLock<T> {}
 unsafe impl<T: Send> Sync for RwLock<T> {}
 
-#[allow(dead_code)]
 impl<T> RwLock<T> {
     /// Creates a new `RwLock` in the unlocked state.
     ///

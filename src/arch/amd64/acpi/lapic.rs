@@ -85,7 +85,6 @@ const LOCAL_APIC_VMA: usize = 0xFFFFFFFFFFFFF000;
 // ============================================================================
 
 /// Offsets (in bytes) from the LAPIC base address for each register.
-#[allow(dead_code)]
 struct RegOffsets;
 
 impl RegOffsets {
@@ -124,8 +123,7 @@ impl RegOffsets {
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct LocalApic;
-
-#[allow(dead_code)]  // It's full and done LAPIC interface
+  // It's full and done LAPIC interface
 impl LocalApic {
     /// Returns a handle to the Local APIC.
     ///

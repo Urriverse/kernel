@@ -1,7 +1,6 @@
 //! # VFS Error Definitions
 #[repr(usize)]
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum Error {
     Unknown,
     NotAFile,

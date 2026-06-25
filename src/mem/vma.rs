@@ -1,8 +1,7 @@
 use alloc::alloc::{alloc, dealloc, Layout};
 use core::ptr::NonNull;
 use crate::sync::Nutex;
-
-#[allow(dead_code)] pub const MAX_CANONICAL_ADDR: usize = 0x0000_7FFF_FFFF_FFFF;
+ pub const MAX_CANONICAL_ADDR: usize = 0x0000_7FFF_FFFF_FFFF;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +17,6 @@ bitflags! {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum Color {
     Red,
     Black,
@@ -41,7 +39,6 @@ pub struct VmaNode {
     subtree_max_gap: usize,
 }
 
-#[allow(dead_code)]
 impl VmaNode {
     fn new(start: usize, end: usize, flags: VmaFlags) -> Self {
         Self {
@@ -60,7 +57,6 @@ impl VmaNode {
 }
 
 #[inline]
-#[allow(dead_code)]
 fn update_augmentation(node: &mut NonNull<VmaNode>) {
     unsafe {
         let n = node.as_mut();
@@ -98,7 +94,6 @@ fn update_augmentation(node: &mut NonNull<VmaNode>) {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct VmaTree {
     root: Option<NonNull<VmaNode>>,
@@ -110,7 +105,6 @@ unsafe impl Sync for VmaTree {}
 unsafe impl Send for VmaNode {}
 unsafe impl Send for VmaTree {}
 
-#[allow(dead_code)]
 impl VmaTree {
     const fn new() -> Self {
         Self {
@@ -509,7 +503,6 @@ pub struct Vmm {
     tree: Nutex<VmaTree>,
 }
 
-#[allow(dead_code)]
 impl Vmm {
     pub const fn new() -> Self {
         Self {

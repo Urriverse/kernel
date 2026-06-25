@@ -247,13 +247,6 @@ pub fn init() {
         inner.end_pfn = end;
         drop(inner);
 
-        let zone_name = match i {
-            0 => "DMA",
-            1 => "DMA32",
-            2 => "Normal",
-            _ => "Unknown",
-        };
-
         info!(
             "Initialized {} - {}",
             start,
@@ -336,7 +329,6 @@ pub fn init() {
         }
     }
 
-    let stats = usage();
     info!("Initialized");
 }
 
@@ -373,8 +365,10 @@ pub fn alloc(count: usize) -> Paddr {
     }
 
     #[cfg(debug_assertions)] panic!("Out of memory (requested {} pages)", count);
-    #[cfg(not(debug_assertions))] error!("Out of memory (requested {} pages)", count);
-    Paddr::from_raw(0)
+    #[cfg(not(debug_assertions))] {
+        error!("Out of memory (requested {} pages)", count);
+        return Paddr::from_raw(0)
+    }
 }
 
 fn refill_pcp(zone_idx: usize, order: usize, cpu_id: usize) {
@@ -573,7 +567,6 @@ pub fn usage() -> [usize; 3] {
     ]
 }
 
-#[allow(dead_code)]
 pub fn alloc_from_zone_direct(zone: Zone, count: usize) -> Paddr {
     if count == 0 {
         return Paddr::from_raw(0);

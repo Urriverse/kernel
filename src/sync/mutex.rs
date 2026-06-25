@@ -96,7 +96,6 @@ use core::{
 ///     *guard += 1;
 /// }
 /// ```
-#[allow(dead_code)]
 pub struct Mutex<T> {
     lock: AtomicBool,
     data: UnsafeCell<T>,
@@ -106,7 +105,6 @@ pub struct Mutex<T> {
 unsafe impl<T: Send> Send for Mutex<T> {}
 unsafe impl<T: Send> Sync for Mutex<T> {}
 
-#[allow(dead_code)]
 impl<T> Mutex<T> {
     /// Creates a new `Mutex` in the unlocked state.
     ///

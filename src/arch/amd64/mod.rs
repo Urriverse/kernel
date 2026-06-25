@@ -81,6 +81,7 @@ pub mod syscall;  // System call entry point
 
 use core::arch::x86_64;
 use core::arch::asm;
+use core::hint::unlikely;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // ============================================================================
@@ -212,7 +213,7 @@ fn read_apic_id() -> u32 {
 /// Checks if the `rdpid` instruction is available.
 fn has_rdpid() -> bool {
     let max_leaf = max_cpuid_leaf();
-    if max_leaf < CPUID_EXT_FEATURES {
+    if unlikely(max_leaf < CPUID_EXT_FEATURES) {
         return false;
     }
     let r = cpuid(CPUID_EXT_FEATURES, 0);
@@ -290,7 +291,7 @@ pub fn early_init() {
     let pcpu = percpu::current();
     pcpu.cpu_id = cpu_id;
     
-    if cpu_id > MAX_CPUS - 1 {
+    if unlikely(cpu_id > MAX_CPUS - 1) {
         error!("Too high CPU detected. Gonna sleep (Zzz...)");
         unsafe {
             core::arch::asm! {
@@ -310,7 +311,7 @@ pub fn early_init() {
 /// Otherwise, reads the `IA32_TSC_AUX` MSR.
 #[inline(always)]
 pub fn current_cpu() -> usize {
-    if RDPID_AVAILABLE.load(Ordering::Acquire) {
+    if core::hint::likely(RDPID_AVAILABLE.load(Ordering::Acquire)) {
         rdpid_raw()
     } else {
         unsafe { rdmsr(IA32_TSC_AUX) as usize }

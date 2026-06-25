@@ -36,13 +36,11 @@ pub fn init() {
 }
 
 #[inline]
-#[allow(dead_code)]
 pub fn regions() -> &'static [Region] {
     &REGIONS
 }
 
 #[inline]
-#[allow(dead_code)]
 pub fn region_count() -> usize {
     REGIONS.len()
 }
@@ -58,7 +56,6 @@ pub fn is_mapped(paddr: usize) -> bool {
 }
 
 #[inline]
-#[allow(dead_code)]
 pub fn is_range_mapped(paddr: usize, size: usize) -> bool {
     let end = paddr + size;
     for region in REGIONS.iter() {
@@ -70,7 +67,6 @@ pub fn is_range_mapped(paddr: usize, size: usize) -> bool {
     false
 }
 
-#[allow(dead_code)]
 pub fn find_region(paddr: usize) -> Option<Region> {
     for region in REGIONS.iter() {
         if paddr >= region.base && paddr < region.base + region.len {

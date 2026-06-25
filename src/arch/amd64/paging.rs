@@ -230,8 +230,8 @@ impl Default for Entry {
 // PAGE TABLE STRUCTURE
 // ============================================================================
 
+use core::hint::{likely, unlikely};
 use core::ops::{Index, IndexMut};
-use heapless::Vec;
 
 use crate::mem::kdm::Vaddr;
 use crate::mem::upa;
@@ -332,7 +332,6 @@ pub fn flush_tlb(vaddr: usize) {
 }
 
 /// Invalidates all TLB entries (by reloading CR3).
-#[allow(dead_code)]
 pub fn flush_all(cr3: u64) {
     debug!("TLB flush-all CR3 {:#018X}", cr3);
     unsafe {
@@ -375,7 +374,7 @@ pub fn walk_entry_mut(
 
     let pml4_entry = &mut root.0[pml4_idx];
     if !pml4_entry.is_present() {
-        if !create {
+        if unlikely(!create) {
             return Err("PML4 entry not present");
         }
         let new_tab = alloc_tab_zeroed();
@@ -394,7 +393,7 @@ pub fn walk_entry_mut(
     }
 
     if !pdpt_entry.is_present() {
-        if !create {
+        if unlikely(!create) {
             return Err("PDPT entry not present");
         }
         let new_tab = alloc_tab_zeroed();
@@ -404,7 +403,7 @@ pub fn walk_entry_mut(
         );
         debug!("Created PDPT[{}] for vaddr {:#X}", pdpt_idx, vaddr);
     }
-    if is_huge(pdpt_entry) {
+    if unlikely(is_huge(pdpt_entry)) {
         return Err("1 GiB huge page encountered - split first");
     }
 
@@ -416,7 +415,7 @@ pub fn walk_entry_mut(
     }
 
     if !pd_entry.is_present() {
-        if !create {
+        if unlikely(!create) {
             return Err("PD entry not present");
         }
         let new_tab = alloc_tab_zeroed();
@@ -425,14 +424,14 @@ pub fn walk_entry_mut(
             EntryFlags::PRESENT | EntryFlags::WRITABLE,
         );
     }
-    if is_huge(pd_entry) {
+    if unlikely(is_huge(pd_entry)) {
         return Err("2 MiB huge page encountered - split first");
     }
 
     let pt = tab_from_entry(pd_entry);
     let pt_entry = &mut pt.0[pt_idx];
 
-    if !pt_entry.is_present() && !create {
+    if unlikely(!pt_entry.is_present() && !create) {
         return Err("PT entry not present");
     }
 
@@ -460,16 +459,16 @@ pub fn walk_entry(
     let pt_idx   = pt_i(vaddr);
 
     let pml4_entry = &root.0[pml4_idx];
-    if !pml4_entry.is_present() {
+    if unlikely(!pml4_entry.is_present()) {
         return Err("PML4 entry not present");
     }
-    if is_huge(pml4_entry) {
+    if unlikely(is_huge(pml4_entry)) {
         return Err("PML4 huge - unsupported");
     }
 
     let pdpt = tab_from_entry_const(pml4_entry);
     let pdpt_entry = &pdpt.0[pdpt_idx];
-    if !pdpt_entry.is_present() {
+    if unlikely(!pdpt_entry.is_present()) {
         return Err("PDPT entry not present");
     }
     if level_hint == 2 {
@@ -481,7 +480,7 @@ pub fn walk_entry(
 
     let pd = tab_from_entry_const(pdpt_entry);
     let pd_entry = &pd.0[pd_idx];
-    if !pd_entry.is_present() {
+    if unlikely(!pd_entry.is_present()) {
         return Err("PD entry not present");
     }
     if level_hint == 1 {
@@ -493,7 +492,7 @@ pub fn walk_entry(
 
     let pt = tab_from_entry_const(pd_entry);
     let pt_entry = &pt.0[pt_idx];
-    if !pt_entry.is_present() {
+    if unlikely(!pt_entry.is_present()) {
         return Err("PT entry not present");
     }
     Ok(pt_entry)
@@ -570,7 +569,6 @@ pub struct Exco {
     pub owned: bool,
 }
 
-#[allow(dead_code)]
 impl Exco {
     // ------------------------------------------------------------------------
     // CONSTRUCTORS
@@ -603,7 +601,7 @@ impl Exco {
     fn dup_table(table: &Tab) -> (&'static mut Tab, usize) {
         let new = alloc_tab_zeroed();
         for (i, entry) in table.0.iter().enumerate() {
-            if entry.is_present() && !is_huge(entry) {
+            if likely(entry.is_present() && !is_huge(entry)) {
                 let child = tab_from_entry(entry);
                 let (_, child_paddr) = Self::dup_table(child);
                 new.0[i] = Entry::new(Paddr::from_raw(child_paddr), entry.flags());
@@ -631,7 +629,7 @@ impl Exco {
     ///
     /// If the context is owned, the old tables are freed.
     pub fn clean(&mut self) {
-        if self.owned {
+        if likely(self.owned) {
             Self::free_table(self.root, true);
             self.root = alloc_tab_zeroed();
         } else {
@@ -646,7 +644,7 @@ impl Exco {
     fn free_table(table: &mut Tab, free_self: bool) {
         let paddr = Vaddr::from_ref(&*table).to_phys();
         for entry in table.0.iter_mut() {
-            if entry.is_present() && !is_huge(entry) {
+            if likely(entry.is_present() && !is_huge(entry)) {
                 Self::free_table(tab_from_entry(entry), true);
             }
             *entry = Entry::default();
@@ -654,75 +652,6 @@ impl Exco {
         if free_self {
             free_tab(paddr);
         }
-    }
-
-    // ------------------------------------------------------------------------
-    // REPORTING
-    // ------------------------------------------------------------------------
-
-    /// Reports all mapped regions in the address space.
-    ///
-    /// # Type Parameters
-    /// * `N` – The maximum number of `Area`s to return.
-    ///
-    /// # Returns
-    /// A `Vec<Area, N>` of contiguous mapped regions, grouped by flags.
-    pub fn report<const N: usize>(&self) -> Vec<Area, N> {
-        debug!("Exco::report<{}> start", N);
-        let mut areas: Vec<Area, N> = Vec::new();
-        let mut total_pages: usize = 0;
-        for pml4_idx in 0..512 {
-            let pml4_entry = &self.root.0[pml4_idx];
-            if !pml4_entry.is_present() {
-                continue;
-            }
-            let base_pml4 = if pml4_idx >= 256 {
-                0xFFFF000000000000 | (pml4_idx << 39)
-            } else {
-                pml4_idx << 39
-            };
-            if is_huge(pml4_entry) {
-                continue;
-            }
-            let pdpt = tab_from_entry(pml4_entry);
-            for pdpt_idx in 0..512 {
-                let pdpt_entry = &pdpt.0[pdpt_idx];
-                if !pdpt_entry.is_present() {
-                    continue;
-                }
-                let base_pdpt = base_pml4 | (pdpt_idx << 30);
-                if is_huge(pdpt_entry) {
-                    try_push_area(&mut areas, base_pdpt, 1 << 20, pdpt_entry.flags());
-                    total_pages += 1 << 20;
-                    continue;
-                }
-                let pd = tab_from_entry(pdpt_entry);
-                for pd_idx in 0..512 {
-                    let pd_entry = &pd.0[pd_idx];
-                    if !pd_entry.is_present() {
-                        continue;
-                    }
-                    let base_pd = base_pdpt | (pd_idx << 21);
-                    if is_huge(pd_entry) {
-                        try_push_area(&mut areas, base_pd, 512, pd_entry.flags());
-                        total_pages += 512;
-                        continue;
-                    }
-                    let pt = tab_from_entry(pd_entry);
-                    for pt_idx in 0..512 {
-                        let pt_entry = &pt.0[pt_idx];
-                        if !pt_entry.is_present() {
-                            continue;
-                        }
-                        let base_pt = base_pd | (pt_idx << 12);
-                        try_push_area(&mut areas, base_pt, 1, pt_entry.flags());
-                        total_pages += 1;
-                    }
-                }
-            }
-        }
-        debug!("Exco::report done: {} areas, {} 4K pages mapped", areas.len(), total_pages);
-        areas
     }
 
     // ------------------------------------------------------------------------
@@ -750,7 +679,7 @@ impl Exco {
     /// - If the virtual address is not 4 KiB aligned.
     /// - If the page table walk fails.
     pub fn try_map4k(&mut self, vaddr: usize, paddr: Paddr, flags: EntryFlags) -> Result<(), &'static str> {
-        if vaddr & MASK_4K != 0 {
+        if unlikely(vaddr & MASK_4K != 0) {
             return Err("vaddr not 4 KiB-aligned");
         }
         let entry = walk_entry_mut(self.root, vaddr, 0, true)?;
@@ -765,10 +694,10 @@ impl Exco {
     /// - If the virtual address is not 2 MiB aligned.
     /// - If the physical address is not 2 MiB aligned.
     pub fn try_map2m(&mut self, vaddr: usize, paddr: Paddr, flags: EntryFlags) -> Result<(), &'static str> {
-        if vaddr & MASK_2M != 0 {
+        if unlikely(vaddr & MASK_2M != 0) {
             return Err("vaddr not 2 MiB-aligned");
         }
-        if paddr.to_raw() & MASK_2M != 0 {
+        if unlikely(paddr.to_raw() & MASK_2M != 0) {
             return Err("paddr not 2 MiB-aligned");
         }
         debug!("map2m vaddr {:#X} -> phys {:#016X} flags {:?}", vaddr, paddr.to_raw(), flags);
@@ -784,10 +713,10 @@ impl Exco {
     /// - If the virtual address is not 1 GiB aligned.
     /// - If the physical address is not 1 GiB aligned.
     pub fn try_map1g(&mut self, vaddr: usize, paddr: Paddr, flags: EntryFlags) -> Result<(), &'static str> {
-        if vaddr & MASK_1G != 0 {
+        if unlikely(vaddr & MASK_1G != 0) {
             return Err("vaddr not 1 GiB-aligned");
         }
-        if paddr.to_raw() & MASK_1G != 0 {
+        if unlikely(paddr.to_raw() & MASK_1G != 0) {
             return Err("paddr not 1 GiB-aligned");
         }
         debug!("map1g vaddr {:#X} -> phys {:#016X} flags {:?}", vaddr, paddr.to_raw(), flags);
@@ -857,12 +786,12 @@ impl Exco {
     /// - If the virtual address is not 2 MiB aligned.
     /// - If the entry is not a 2 MiB huge page.
     pub fn try_split2m(&mut self, vaddr: usize) -> Result<(), &'static str> {
-        if vaddr & MASK_2M != 0 {
+        if unlikely(vaddr & MASK_2M != 0) {
             return Err("vaddr not 2 MiB-aligned");
         }
 
         let entry = walk_entry_mut(self.root, vaddr, 1, false)?;
-        if !entry.is_present() || !is_huge(entry) {
+        if unlikely(!entry.is_present() || !is_huge(entry)) {
             return Err("not a 2 MiB huge page");
         }
 
@@ -890,12 +819,12 @@ impl Exco {
     /// - If the virtual address is not 1 GiB aligned.
     /// - If the entry is not a 1 GiB huge page.
     pub fn try_split1g(&mut self, vaddr: usize) -> Result<(), &'static str> {
-        if vaddr & MASK_1G != 0 {
+        if unlikely(vaddr & MASK_1G != 0) {
             return Err("vaddr not 1 GiB-aligned");
         }
 
         let entry = walk_entry_mut(self.root, vaddr, 2, false)?;
-        if !entry.is_present() || !is_huge(entry) {
+        if unlikely(!entry.is_present() || !is_huge(entry)) {
             return Err("not a 1 GiB huge page");
         }
 
@@ -938,12 +867,12 @@ impl Exco {
     /// - If the PD entry is not a table pointer.
     /// - If the pages are not contiguous or have inconsistent flags.
     pub fn try_merge2m(&mut self, vaddr: usize) -> Result<(), &'static str> {
-        if vaddr & MASK_2M != 0 {
+        if unlikely(vaddr & MASK_2M != 0) {
             return Err("vaddr not 2 MiB-aligned");
         }
 
         let pd_entry = walk_entry_mut(self.root, vaddr, 1, false)?;
-        if !pd_entry.is_present() || is_huge(pd_entry) {
+        if unlikely(!pd_entry.is_present() || is_huge(pd_entry)) {
             return Err("PD entry is not a table pointer");
         }
 
@@ -958,12 +887,12 @@ impl Exco {
     /// - If the PDPT entry is not a table pointer.
     /// - If the pages are not contiguous or have inconsistent flags.
     pub fn try_merge1g(&mut self, vaddr: usize) -> Result<(), &'static str> {
-        if vaddr & MASK_1G != 0 {
+        if unlikely(vaddr & MASK_1G != 0) {
             return Err("vaddr not 1 GiB-aligned");
         }
 
         let pdpt_entry = walk_entry_mut(self.root, vaddr, 2, false)?;
-        if !pdpt_entry.is_present() || is_huge(pdpt_entry) {
+        if unlikely(!pdpt_entry.is_present() || is_huge(pdpt_entry)) {
             return Err("PDPT entry is not a table pointer");
         }
 
@@ -1036,25 +965,6 @@ impl Drop for Exco {
 }
 
 // ============================================================================
-// HELPER FUNCTIONS FOR REPORTING
-// ============================================================================
-
-/// Tries to push an area to the report vector, merging if possible.
-fn try_push_area<const N: usize>(
-    areas: &mut Vec<Area, N>,
-    vaddr: usize,
-    count: usize,
-    flags: EntryFlags,
-) {
-    if let Some(last) = areas.last_mut()
-    && last.flags == flags && last.start + last.count * 4096 == vaddr {
-        last.count += count;
-        return;
-    }
-    let _ = areas.push(Area { start: vaddr, count, flags });
-}
-
-// ============================================================================
 // COALESCING FUNCTIONS (FOR MERGING)
 // ============================================================================
 
@@ -1067,20 +977,20 @@ fn try_coalesce_into_2m(
     let first_flags = pt.0[0].flags() - EntryFlags::ACCESSED - EntryFlags::DIRTY;
     let first_paddr = pt.0[0].address();
 
-    if !pt.0[0].is_present() {
+    if unlikely(!pt.0[0].is_present()) {
         return Err("first PT entry not present");
     }
 
     for i in 1..512 {
-        if !pt.0[i].is_present() {
+        if unlikely(!pt.0[i].is_present() ){
             return Err("PT entry not present");
         }
         let flags = pt.0[i].flags() - EntryFlags::ACCESSED - EntryFlags::DIRTY;
-        if flags != first_flags {
+        if unlikely(flags != first_flags) {
             return Err("inconsistent flags across PT entries");
         }
         let expected_paddr = Paddr::from_raw(first_paddr.to_raw() + (i << 12));
-        if pt.0[i].address().to_raw() != expected_paddr.to_raw() {
+        if unlikely(pt.0[i].address().to_raw() != expected_paddr.to_raw()) {
             return Err("non-contiguous physical addresses");
         }
     }
@@ -1104,20 +1014,20 @@ fn try_coalesce_into_1g(
     let first_flags = pd.0[0].flags() - EntryFlags::ACCESSED - EntryFlags::DIRTY;
     let first_paddr = pd.0[0].address();
 
-    if !pd.0[0].is_present() || !is_huge(&pd.0[0]) {
+    if unlikely(!pd.0[0].is_present() || !is_huge(&pd.0[0])) {
         return Err("first PD entry not a 2 MiB huge page");
     }
 
     for i in 1..512 {
-        if !pd.0[i].is_present() || !is_huge(&pd.0[i]) {
+        if unlikely(!pd.0[i].is_present() || !is_huge(&pd.0[i])) {
             return Err("PD entry not a 2 MiB huge page");
         }
         let flags = pd.0[i].flags() - EntryFlags::ACCESSED - EntryFlags::DIRTY;
-        if flags != first_flags {
+        if unlikely(flags != first_flags) {
             return Err("inconsistent flags across PD entries");
         }
         let expected_paddr = Paddr::from_raw(first_paddr.to_raw() + (i << 21));
-        if pd.0[i].address().to_raw() != expected_paddr.to_raw() {
+        if unlikely(pd.0[i].address().to_raw() != expected_paddr.to_raw()) {
             return Err("non-contiguous physical addresses");
         }
     }

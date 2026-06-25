@@ -1,4 +1,3 @@
-//! # Scheduler Subsystem (EEVDF + NVDL + SMP Load Balancing)
 pub mod task;
 pub mod rq;
 pub mod wq;
@@ -156,23 +155,13 @@ pub fn exit(code: i32) -> ! {
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap();
     let mut task = rq.remove(current_id).unwrap();
-    
+
     let pid = task.process.pid;
-    
+
     debug!("Exiting task \"{}\" (TID {} PID {}) with code {}", task.name, current_id.0, pid, code);
-    
+
     rq.clear_current();
 
-    trace!("@");
-
-    // hang?
-
-    drop(rq); // needed to prevent deadlock
-
-    // hang?
-
-    trace!("!");
-    
     let init_id = unsafe { REAPER };
     {
         let mut registry = TASK_REGISTRY.lock();
@@ -180,57 +169,53 @@ pub fn exit(code: i32) -> ! {
             if t.parent == Some(current_id) { t.parent = Some(init_id); }
         }
     }
-    
+
     task.state = TaskState::Zombie;
     task.exit_code = code;
     TASK_REGISTRY.lock().insert(current_id, task);
-    
+
     crate::debug!("Task {} is now a zombie, waking up reaper...", current_id.0);
     wakeup(&EXIT_WQ);
+
     yield_now();
     loop { unsafe { core::arch::asm! { "hlt" } } }
 }
 
 #[inline(always)]
-pub fn yield_now() { unsafe { core::arch::asm!("int 33"); } }
+pub fn yield_now() {
+    unsafe {
+        core::arch::asm!("int 33");
+    }
+}
 
 pub fn sleep(wq: &Nutex<WaitQueue>) {
     let cpu = current_cpu();
     
-    // 1. Safely grab the task ID
     let current_id = {
         let rq = RUNQUEUES[cpu].lock();
         rq.current_task_id().unwrap()
     };
 
-    // 2. LOCK ORDERING: Lock WQ first, then RQ
     let mut wq_guard = wq.lock();
     let mut rq = RUNQUEUES[cpu].lock();
 
-    // 3. Add to WaitQueue
     wq_guard.sleep(current_id);
     
-    // CRITICAL FIX: Properly remove the task from the EEVDF scheduling trees!
-    // Do NOT manually set task.state = Sleeping here. `sleep_task` handles it.
     rq.sleep_task(current_id); 
 
-    // 4. Drop locks
     drop(rq);
     drop(wq_guard);
     
-    // 5. Yield the CPU
     yield_now();
 }
 
 pub fn wakeup(wq: &Nutex<WaitQueue>) {
-    // 1. Lock WQ, extract the task, and DROP WQ immediately to prevent inversion
     let task_id = {
         let mut wq_guard = wq.lock();
         wq_guard.wakeup_one()
     };
     
     if let Some(task_id) = task_id {
-        // 2. Search RQs safely
         let mut found = false;
         for cpu in 0..crate::arch::num_cpus() {
             let mut rq = RUNQUEUES[cpu].lock();
@@ -248,7 +233,6 @@ pub fn wakeup(wq: &Nutex<WaitQueue>) {
     }
 }
 
-#[allow(dead_code)]
 pub fn wait_child(child_id: TaskId) -> i32 {
     loop {
         let mut registry = TASK_REGISTRY.lock();
@@ -268,6 +252,7 @@ pub fn wait_any() -> Option<(TaskId, Box<Task>)> {
         let mut registry = match registry_opt {
             Some(x) => x,
             None => {
+                // usually happens on extremely high sleep-wakeup operations frequency
                 warn!("Can't obtain lock");
                 break 'x None
             }
@@ -286,7 +271,7 @@ pub fn timer_tick(frame: &mut TrapFrame) {
     if current_cpu() == 0 {
         crate::arch::TIME_FROM_BOOT.fetch_add(10, Ordering::Relaxed);
         let ticks = BALANCE_TICKS.fetch_add(10, Ordering::Relaxed);
-        if ticks % 100 == 0 { 
+        if ticks % 100 == 0 { // each 100 ms
             balance_cpus();
         }
     }
@@ -362,11 +347,8 @@ pub fn reschedule(frame: &mut TrapFrame) {
     
     if let Some(next_id) = next_id {
         if Some(next_id) != current_id {
-            // FIX: Extract old_pid IMMUTABLY before we do any mutable borrows of `rq`.
-            // If current_id is None (e.g., coming from idle), old_pid will be None.
             let old_pid = current_id.and_then(|id| rq.tasks().get(&id)).map(|t| t.process.pid);
             
-            // 1. Save old task context (Mutable borrow #1, scoped and dropped)
             if let Some(curr_id) = current_id {
                 if let Some(old_task) = rq.tasks_mut().get_mut(&curr_id) {
                     old_task.ctx.frame = *frame;
@@ -377,7 +359,6 @@ pub fn reschedule(frame: &mut TrapFrame) {
                 }
             }
             
-            // 2. Load new task context (Mutable borrow #2)
             if let Some(new_task) = rq.tasks_mut().get_mut(&next_id) {
                 new_task.state = TaskState::Running;
                 *frame = new_task.ctx.frame;
@@ -389,7 +370,6 @@ pub fn reschedule(frame: &mut TrapFrame) {
                 
                 let new_pid = new_task.process.pid;
                 
-                // 3. Switch CR3 if process changed (or if coming from idle where old_pid is None)
                 if old_pid != Some(new_pid) {
                     let new_cr3 = new_task.process.address_space.lock().exco.cr3;
                     unsafe {
@@ -455,7 +435,7 @@ pub fn current_process() -> Option<Arc<Process>> {
     let cpu = current_cpu();
     let rq = RUNQUEUES[cpu].lock();
     if let Some(id) = rq.current_task_id() && let Some(task) = rq.tasks().get(&id) {
-        return Some(task.process.clone());
+        return Some(task.process.clone())
     }
     None
 }

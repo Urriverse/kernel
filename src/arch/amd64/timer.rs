@@ -47,8 +47,8 @@
 //! - The calibration function spins with interrupts disabled; this is safe
 //!   because it is called before interrupts are enabled.
 
-use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::{Mutex, Nutex}};
-use core::arch::naked_asm;
+use crate::{arch::paging::EntryFlags, mem::kdm::{Paddr, Vaddr}, sync::Mutex};
+use core::{arch::naked_asm, hint::unlikely};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
@@ -72,51 +72,6 @@ static CALIBRATED_TICKS: AtomicU64 = AtomicU64::new(0);
 ///
 /// # Safety
 /// This is a naked function that manipulates the stack and registers directly.
-#[unsafe(naked)]
-pub unsafe extern "C" fn _timer_wrapper() -> ! {
-    naked_asm!(
-        // If we came from user mode (RPL 3), swap GS.
-        "mov rax, [rsp + 8]",
-        "and rax, 3",
-        "cmp rax, 3",
-        "jne 1f",
-        "swapgs",
-        "1:",
-
-        // Save all general‑purpose registers on the stack.
-        "push r15", "push r14", "push r13", "push r12",
-        "push r11", "push r10", "push r9", "push r8",
-        "push rbp", "push rdi", "push rsi", "push rdx",
-        "push rcx", "push rbx", "push rax",
-
-        // Call the scheduler tick handler with the trap frame.
-        "mov rdi, rsp",
-        "call {scheduler_tick}",
-
-        // Restore all general‑purpose registers.
-        "pop rax", "pop rbx", "pop rcx", "pop rdx",
-        "pop rsi", "pop rdi", "pop rbp", "pop r8",
-        "pop r9", "pop r10", "pop r11", "pop r12",
-        "pop r13", "pop r14", "pop r15",
-
-        // If we came from user mode, swap GS back.
-        "mov rax, [rsp + 8]",
-        "and rax, 3",
-        "cmp rax, 3",
-        "jne 2f",
-        "swapgs",
-        "2:",
-
-        // Return from interrupt.
-        "iretq",
-
-        scheduler_tick = sym crate::sched::timer_tick,
-    );
-}
-
-// ... (previous code remains the same)
-
-/// Naked interrupt wrapper for the APIC timer.
 #[unsafe(naked)]
 pub unsafe extern "C" fn timer_wrapper() -> ! {
     naked_asm!(
@@ -159,8 +114,6 @@ pub unsafe extern "C" fn timer_wrapper() -> ! {
         scheduler_tick = sym crate::sched::timer_tick,
     );
 }
-
-// ... (rest of the file remains the same)
 
 // ============================================================================
 // HPET CONSTANTS AND STRUCTURE
@@ -228,8 +181,7 @@ impl Hpet {
     }
 }
 
-/// The global HPET instance, protected by a `Nutex`.
-#[allow(dead_code)] pub static INSTANCE: Nutex<Hpet> = Nutex::new(Hpet);
+/// The global HPET instance, protected by a `Nutex`. pub static INSTANCE: Nutex<Hpet> = Nutex::new(Hpet);
 
 // ============================================================================
 // HPET INITIALISATION
@@ -290,7 +242,8 @@ pub fn calibrate() {
     // Wait 1 second
     loop {
         core::hint::spin_loop();
-        if (*inst.counter() - start_hpet) >= hpet_ticks_to_wait { break; }
+        // `unlikely` here makes calibration a bit more precise
+        if unlikely((*inst.counter() - start_hpet) >= hpet_ticks_to_wait) { break; }
     }
     inst.disable();
 

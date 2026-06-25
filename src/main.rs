@@ -47,30 +47,16 @@
 #![feature(abi_x86_interrupt)]
 #![feature(const_trait_impl)]
 #![feature(likely_unlikely)]
-#![feature(const_destruct)]
 #![feature(const_cmp)]
-#![feature(mem_copy_fn)]
 #![feature(naked_functions_rustic_abi)]
 
-#![allow(unused)]
 #![allow(clippy::missing_transmute_annotations)]
-#![warn(unused_braces)]
-#![warn(unused_comparisons)]
-#![warn(unused_import_braces)]
-#![warn(unused_imports)]
-#![warn(unused_labels)]
-#![warn(unused_mut)]
-#![warn(unused_parens)]
-#![warn(unused_qualifications)]
-#![warn(unused_unsafe)]
-#![warn(dead_code)]
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
 use core::ptr::addr_of;
 
-use alloc::{string::ToString, sync::Arc};
-use sched::current_process;
+use alloc::sync::Arc;
 
 // ============================================================================
 // EXTERNAL CRATES
@@ -286,25 +272,9 @@ entry! {
 
 fn vfs_test() {
     // Create PVFS instance
-    let pvfs = Arc::new(vfs::Pvfs::new());
-    let mb_id = vfs::register_mblock(pvfs.clone() as Arc<dyn vfs::FileSystem>);
-    let mb = vfs::get_mblock(mb_id).unwrap();
-    // Create root directory
-    let root_inode = vfs::Inode::default();
-    let root_id = vfs::new(&mb, root_inode, vfs::Kind::Directory).expect("Failed to create root dir");
-    // Mount it as "root" in the process namespace
-    let roots = current_process().expect("NOPID").roots.clone();
-    roots.mount_new("root".to_string(), root_id).expect("Mount failed");
-    // Create a file
-    let file_inode = vfs::Inode::default();
-    let file_id = vfs::new(&mb, file_inode, vfs::Kind::File).expect("Failed to create file");
-    // Link it into root
-    vfs::link(&mb, root_id, "testfile", file_id).expect("Link failed");
-    // Write and read back
-    vfs::write(&mb, file_id, 0, b"[NOT FAILED]").expect("Write failed");
-    let mut buf = *b"[FAILED]    ";
-    let n = vfs::read(&mb, file_id, 0, &mut buf).expect("Read failed");
-    debug!("vfs test: {}", str::from_utf8(&buf[..n]).unwrap());
+    let initramfs = Arc::new(vfs::Rotar::new(MODULES.response().expect("opps").modules()[0].data()));
+    let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::FileSystem>);
+    let _mb = vfs::get_mblock(mb_id).unwrap();
     sched::exit(0);
 }
 
@@ -320,6 +290,8 @@ fn vfs_test() {
 /// This is a kernel task and never exits; it runs forever to ensure no
 /// zombies accumulate.
 fn init() {
+    ebus::init();
+
     let _ = sched::spawn_kernel_task(
         vfs_test,
         sched::task::Priority(0),
@@ -331,8 +303,6 @@ fn init() {
         ),
         None
     );
-
-    ebus::init();
 
     sched::exit(0);
 }

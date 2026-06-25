@@ -345,14 +345,12 @@ pub fn get_page_ptr(pfn: usize) -> Option<*mut Page> {
 
 /// Converts a physical address (Paddr) to a PFN.
 #[inline(always)]
-#[allow(dead_code)]
 pub fn paddr_to_pfn(paddr: crate::mem::kdm::Paddr) -> usize {
     paddr.to_raw() / 4096
 }
 
 /// Returns the `Page` metadata for the page frame containing the given physical address.
 #[inline(always)]
-#[allow(dead_code)]
 pub fn get_page_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<&'static Page> {
     get_page(paddr_to_pfn(paddr))
 }
@@ -360,7 +358,6 @@ pub fn get_page_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<&'static Page>
 /// Returns a raw pointer to the `Page` metadata for the page frame containing
 /// the given physical address.
 #[inline(always)]
-#[allow(dead_code)]
 pub fn get_page_ptr_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<*mut Page> {
     get_page_ptr(paddr_to_pfn(paddr))
 }
@@ -375,10 +372,8 @@ pub fn get_page_ptr_by_paddr(paddr: crate::mem::kdm::Paddr) -> Option<*mut Page>
 /// This struct is intended to be used by the buddy allocator and other
 /// memory management components to perform atomic operations on page state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct PageFrame(usize);
 
-#[allow(dead_code)]
 impl PageFrame {
     /// Creates a new `PageFrame` from a PFN.
     #[inline(always)]

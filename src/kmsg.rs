@@ -150,7 +150,6 @@ bitflags! {
 /// Identifier for a log sink.
 ///
 /// Combines attributes and a kind ID (from `str4_to_u32`).
-#[allow(dead_code)]
 pub struct SinkIdent {
     /// Attributes of the sink.
     pub attrs: SinkAttrs,
@@ -237,7 +236,6 @@ pub static SINKS: Litex<Vec<&'static dyn Sink, 256>> = Litex::new(Vec::new());
 ///
 /// The sink must be `'static` (i.e., either a `static` variable or a leaked
 /// reference). This function acquires the lock and pushes the sink.
-#[allow(dead_code)]
 pub fn add(sink: &'static dyn Sink) {
     let _ = SINKS.lock().push(sink);
 }

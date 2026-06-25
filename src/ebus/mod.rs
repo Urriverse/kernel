@@ -12,6 +12,7 @@ use crate::sync::{Nutex, RwLock};
 use crate::sched::wq::WaitQueue;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
+use core::hint::unlikely;
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
@@ -32,9 +33,9 @@ struct Subscriber {
 }
 
 // ============================================================================
-// BOUNDED QUEUE (Fixes UAF and OOM)
+// BOUNDED QUEUE
 // ============================================================================
-const QUEUE_CAPACITY: usize = 1024;
+const QUEUE_CAPACITY: usize = 65536;
 
 struct BoundedQueue {
     inner: Nutex<VecDeque<Event>>,
@@ -49,7 +50,7 @@ impl BoundedQueue {
 
     pub fn enqueue(&self, event: Event) -> Result<(), ()> {
         let mut q = self.inner.lock();
-        if q.len() >= QUEUE_CAPACITY {
+        if unlikely(q.len() >= QUEUE_CAPACITY) {
             crate::warn!("EBus: Queue full, dropping event {:#x}", event.id);
             return Err(());
         }
@@ -212,14 +213,12 @@ pub fn init() {
     info!("Initialized");
 }
 
-#[allow(dead_code)]
 pub fn subscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()> {
     let mut guard = SUBSCRIBERS.write();
     guard.entry(event_id).or_insert_with(Vec::new).push(Subscriber { callback });
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn unsubscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()> {
     let mut guard = SUBSCRIBERS.write();
     if let Some(subs) = guard.get_mut(&event_id) {
@@ -233,7 +232,6 @@ pub fn unsubscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()>
     }
 }
 
-#[allow(dead_code)]
 pub fn publish(event_id: EventId, data: usize, affinity: Option<usize>) -> Result<(), ()> {
     let event = Event { id: event_id, data };
     match affinity {

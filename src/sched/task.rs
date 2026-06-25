@@ -7,7 +7,6 @@ use alloc::{boxed::Box, sync::Arc};
 pub struct TaskId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum TaskState {
     Runnable,
     Running,
@@ -34,7 +33,6 @@ impl Priority {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct Task {
     pub id: TaskId,
     pub state: TaskState,
