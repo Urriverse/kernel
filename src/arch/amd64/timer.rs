@@ -73,7 +73,7 @@ static CALIBRATED_TICKS: AtomicU64 = AtomicU64::new(0);
 /// # Safety
 /// This is a naked function that manipulates the stack and registers directly.
 #[unsafe(naked)]
-pub unsafe extern "C" fn timer_wrapper() -> ! {
+pub unsafe extern "C" fn _timer_wrapper() -> ! {
     naked_asm!(
         // If we came from user mode (RPL 3), swap GS.
         "mov rax, [rsp + 8]",
@@ -113,6 +113,54 @@ pub unsafe extern "C" fn timer_wrapper() -> ! {
         scheduler_tick = sym crate::sched::timer_tick,
     );
 }
+
+// ... (previous code remains the same)
+
+/// Naked interrupt wrapper for the APIC timer.
+#[unsafe(naked)]
+pub unsafe extern "C" fn timer_wrapper() -> ! {
+    naked_asm!(
+        // If we came from user mode (RPL 3), swap GS.
+        "mov rax, [rsp + 8]",
+        "and rax, 3",
+        "cmp rax, 3",
+        "jne 1f",
+        "swapgs",
+        "1:",
+        
+        // Save all general‑purpose registers on the stack.
+        "push r15", "push r14", "push r13", "push r12",
+        "push r11", "push r10", "push r9", "push r8",
+        "push rbp", "push rdi", "push rsi", "push rdx",
+        "push rcx", "push rbx", "push rax",
+        
+        // Call the scheduler tick handler with the trap frame.
+        "mov rdi, rsp",
+        "call {scheduler_tick}",
+        
+        // Restore all general‑purpose registers.
+        "pop rax", "pop rbx", "pop rcx", "pop rdx",
+        "pop rsi", "pop rdi", "pop rbp", "pop r8",
+        "pop r9", "pop r10", "pop r11", "pop r12",
+        "pop r13", "pop r14", "pop r15",
+        
+        // If we came from user mode, swap GS back.
+        // FIX: 15 registers * 8 bytes = 120 bytes. 
+        // The hardware frame starts at RSP+120. CS is the second 8-byte value (RSP+128).
+        "mov rax, [rsp + 128]", 
+        "and rax, 3",
+        "cmp rax, 3",
+        "jne 2f",
+        "swapgs",
+        "2:",
+        
+        // Return from interrupt.
+        "iretq",
+        scheduler_tick = sym crate::sched::timer_tick,
+    );
+}
+
+// ... (rest of the file remains the same)
 
 // ============================================================================
 // HPET CONSTANTS AND STRUCTURE

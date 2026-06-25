@@ -16,6 +16,7 @@ use task::{Task, TaskId, TaskState, Priority};
 use rq::RUNQUEUES;
 use wq::WaitQueue;
 use core::arch::naked_asm;
+use core::ptr::addr_of;
 use core::sync::atomic::{AtomicU64, Ordering};
 use crate::arch::paging::EntryFlags;
 
@@ -23,24 +24,26 @@ pub static TASK_REGISTRY: Nutex<BTreeMap<TaskId, Box<Task>>> = Nutex::new(BTreeM
 pub static EXIT_WQ: Nutex<WaitQueue> = Nutex::new(WaitQueue::new());
 static TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
 static BALANCE_TICKS: AtomicU64 = AtomicU64::new(0);
+static mut SPUR: [usize; 16] = [0usize; 16];
 
 pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
+
     for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
-        let stack = allocate_kernel_stack(16 * 1024);
+        trace!("CPU{}", cpu);
+        let stack = allocate_kernel_stack(32 * 1024);
+        trace!("stack at {:p}", stack as *const());
+        crate::arch::percpu::init_syscall_gs(cpu, stack);
+
+        let boot = Task::new_kernel(||loop{}, addr_of!(SPUR) as usize + 64, Priority(0), "boot");
         let mut idle = Task::new_kernel(idle_task, stack, Priority(19), "idle");
-        
-        // CRITICAL FIX: Pin the idle task to this CPU so the balancer never steals it!
-        idle.cpu_affinity = Some(cpu); 
-        
+        idle.cpu_affinity = Some(cpu);
         let mut rq = RUNQUEUES[cpu].lock();
-        rq.set_current(idle.id);
+        rq.set_current(boot.id);
         rq.spawn_task(idle);
-        
-        if cpu == current_cpu() {
-            crate::arch::percpu::set_kernel_stack(stack);
-        }
+        rq.spawn_task(boot);
     }
+
     crate::info!("Initialized with SMP Balancing");
 }
 
@@ -48,7 +51,8 @@ fn allocate_kernel_stack(size: usize) -> usize {
     let pages = size.div_ceil(4096);
     let paddr = crate::mem::upa::alloc(pages);
     if paddr.to_raw() == 0 { panic!("Failed to allocate kernel stack"); }
-    paddr.to_virt().to_raw() + size
+    let rv = paddr.to_virt().to_raw() - 1 + size;
+    rv - rv % 8
 }
 
 #[unsafe(naked)]
@@ -145,6 +149,8 @@ where
     spawn_kernel_task_with_arg(trampoline::<F>, arg, priority, name, root, cpu_affinity)
 }
 
+pub static mut REAPER: TaskId = TaskId(0);
+
 pub fn exit(code: i32) -> ! {
     let cpu = current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
@@ -156,9 +162,18 @@ pub fn exit(code: i32) -> ! {
     debug!("Exiting task \"{}\" (TID {} PID {}) with code {}", task.name, current_id.0, pid, code);
     
     rq.clear_current();
-    drop(rq);
+
+    trace!("@");
+
+    // hang?
+
+    drop(rq); // needed to prevent deadlock
+
+    // hang?
+
+    trace!("!");
     
-    let init_id = TaskId(1);
+    let init_id = unsafe { REAPER };
     {
         let mut registry = TASK_REGISTRY.lock();
         for t in registry.values_mut() {
@@ -399,7 +414,7 @@ pub fn reschedule(frame: &mut TrapFrame) {
 }
 
 #[unsafe(naked)]
-pub unsafe extern "C" fn yield_wrapper() -> ! {
+pub unsafe extern "C" fn _yield_wrapper() -> ! {
     naked_asm!(
         "mov rax, [rsp + 8]", "and rax, 3", "cmp rax, 3", "jne 1f", "swapgs", "1:",
         "push r15", "push r14", "push r13", "push r12", "push r11", "push r10", "push r9", "push r8",
@@ -408,6 +423,30 @@ pub unsafe extern "C" fn yield_wrapper() -> ! {
         "pop rax", "pop rbx", "pop rcx", "pop rdx", "pop rsi", "pop rdi", "pop rbp", "pop r8",
         "pop r9", "pop r10", "pop r11", "pop r12", "pop r13", "pop r14", "pop r15",
         "mov rax, [rsp + 8]", "and rax, 3", "cmp rax, 3", "jne 2f", "swapgs", "2:", "iretq",
+        scheduler_tick = sym reschedule,
+    );
+}
+
+#[unsafe(naked)]
+pub unsafe extern "C" fn yield_wrapper() -> ! {
+    naked_asm!(
+        // Entry swapgs check (CS is at RSP+8 before any pushes)
+        "mov rax, [rsp + 8]", "and rax, 3", "cmp rax, 3", "jne 1f", "swapgs", "1:",
+        
+        // Save registers
+        "push r15", "push r14", "push r13", "push r12", "push r11", "push r10", "push r9", "push r8",
+        "push rbp", "push rdi", "push rsi", "push rdx", "push rcx", "push rbx", "push rax",
+        
+        // Call reschedule
+        "mov rdi, rsp", "call {scheduler_tick}",
+        
+        // Restore registers
+        "pop rax", "pop rbx", "pop rcx", "pop rdx", "pop rsi", "pop rdi", "pop rbp", "pop r8",
+        "pop r9", "pop r10", "pop r11", "pop r12", "pop r13", "pop r14", "pop r15",
+        
+        // Exit swapgs check (CS is now at RSP+128)
+        "mov rax, [rsp + 128]", "and rax, 3", "cmp rax, 3", "jne 2f", "swapgs", "2:", 
+        "iretq",
         scheduler_tick = sym reschedule,
     );
 }

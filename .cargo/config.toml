@@ -7,5 +7,4 @@ rustflags = [
     "-C", "relocation-model=static", 
     "-C", "code-model=kernel", 
     "-C", "no-redzone=y",
-#    "-C", "force-frame-pointers=yes",
 ]

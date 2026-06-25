@@ -194,6 +194,8 @@ pub fn init_syscall_gs(cpu_id: usize, kernel_stack_top: usize) {
         // IA32_KERNEL_GS_BASE (0xC0000102) points to our per‑CPU data.
         crate::arch::wrmsr(0xC0000102, &PERCPU_AREA[cpu_id] as *const _ as u64);
     }
+    // ALSO set the TSS RSP0 for hardware stack switching on interrupts.
+    crate::arch::gdt::set_kernel_stack(cpu_id, kernel_stack_top as u64);
 }
 
 /// Sets the kernel stack top in the per‑CPU data for the current CPU.

@@ -213,6 +213,7 @@ macro_rules! entry
         barrier!{__LAST}
         unsafe extern "C" fn ap_main(_: &limine::mp::MpInfo) -> !
         {
+            unsafe { core::arch::asm! { "cli" } }
             $($a)*
             __LAST.wait();
             $crate::sched::yield_now();
@@ -222,6 +223,7 @@ macro_rules! entry
         }
         pub fn main() -> !
         {
+            unsafe { core::arch::asm! { "cli" } }
             info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
             $($b)*
             __LAST.open();

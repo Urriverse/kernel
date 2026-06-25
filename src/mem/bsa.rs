@@ -1,3 +1,8 @@
+//! Buddy System Allocator (BSA) – zone‑based with per‑CPU caches.
+//! 
+//! This file has been modified to allow allocations of order == MAX_ORDER
+//! and to correctly merge blocks up to the maximum order.
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::mem::MaybeUninit;
 use crate::mem::{pfm, pmr, kdm::Paddr, ema};
@@ -341,7 +346,8 @@ pub fn alloc(count: usize) -> Paddr {
     }
 
     let order = log2_ceil(count);
-    if order >= MAX_ORDER {
+    // FIX: Allow order == MAX_ORDER (inclusive)
+    if order > MAX_ORDER {
         error!("Allocation too large ({} pages, order {})", count, order);
         return Paddr::from_raw(0);
     }
@@ -456,7 +462,8 @@ fn free_to_zone(zone_idx: usize, mut pfn: usize, mut order: usize) {
         page.order.store(order as u8, Ordering::Release);
     }
 
-    while order < MAX_ORDER - 1 {
+    // FIX: Allow merging up to MAX_ORDER (inclusive)
+    while order < MAX_ORDER {
         let buddy_pfn = pfn ^ (1 << order);
 
         if let Some(buddy_page) = pfm::get_page(buddy_pfn) {
@@ -573,7 +580,8 @@ pub fn alloc_from_zone_direct(zone: Zone, count: usize) -> Paddr {
     }
 
     let order = log2_ceil(count);
-    if order >= MAX_ORDER {
+    // FIX: Allow order == MAX_ORDER
+    if order > MAX_ORDER {
         return Paddr::from_raw(0);
     }
 

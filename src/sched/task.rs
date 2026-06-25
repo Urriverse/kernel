@@ -122,7 +122,7 @@ impl Task {
             parent: None,
             exit_code: -1,
             process: Arc::new(Process::new()),
-            kernel_stack_top: kernel_stack_top, // Correctly assigned
+            kernel_stack_top: kernel_stack_top,
             rt_deadline: 0,
         })
     }

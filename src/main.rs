@@ -219,6 +219,16 @@ entry! {
         let ticks_per_10ms = arch::timer::get_ticks_per_10ms();
         sched::init(ticks_per_10ms);
 
+        unsafe {
+            sched::REAPER = sched::spawn_kernel_task(
+                reap,
+                sched::task::Priority(5),
+                "reaper",
+                None,
+                None
+            );
+        }
+
         unsafe { core::arch::asm! { "sti" } }
 
         SCHED_INIT.open();
@@ -239,51 +249,38 @@ entry! {
             None
         );
 
-        loop {
-            crate::info!("waiting for any child to exit...");
-            if let Some((id, task)) = sched::wait_any() {
-                crate::debug!("X: {:p}", addr_of!(*task));
-                crate::info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
-            }
-        }
+        // let _ = sched::spawn_kernel_task(
+        //     ||loop{trace!("*")},
+        //     sched::task::Priority(18),
+        //     "-",
+        //     Some(
+        //         vfs::RootRef::new(
+        //             vfs::RootReg::new()
+        //         )
+        //     ),
+        //     None
+        // );
+
+        sched::exit(400);
     }
 
     for AP {
         // --------------------------------------------------------------------
         // AP INITIALIZATION
         // --------------------------------------------------------------------
-
-        // Early AP init (CPUID, percpu, etc.)
         arch::early_init();
-
-        // Wait for BSP to complete architecture init
         ARCH_INIT.wait();
-
-        // Full AP init (GDT, IDT, etc.)
         arch::init_ap();
-
-        // Wait for BSP to complete memory init
         MEM_INIT.wait();
-
-        // AP memory init (activate shared page table)
         mem::init_ap();
-
-        // Wait for BSP to complete late init
         LATE_INIT.wait();
-
-        // AP late init (ACPI, etc.)
         arch::late_init();
-
-        // Wait for BSP to complete device init
         DEV_INIT.wait();
-
         SCHED_INIT.wait();
 
-        unsafe {
-            core::arch::asm! {
-                "sti"
-            }
-        }
+        unsafe { core::arch::asm! { "sti" } }
+
+        sched::exit(400);
     }
 }
 
@@ -338,4 +335,14 @@ fn init() {
     ebus::init();
 
     sched::exit(0);
+}
+
+fn reap() {
+    loop {
+        warn!("waiting for any child to exit...");
+        if let Some((id, task)) = sched::wait_any() {
+            debug!("X: {:p}", addr_of!(*task));
+            info!("reaped zombie task {:?} {:?}, exit code: {}", id, task.name, task.exit_code);
+        }
+    }
 }
