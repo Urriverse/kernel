@@ -56,6 +56,8 @@
 
 use alloc::{string::ToString as _, sync::Arc};
 
+use crate::sched::current_process;
+
 // ============================================================================
 // EXTERNAL CRATES
 // ============================================================================
@@ -271,7 +273,7 @@ entry! {
     }
 }
 
-fn start_modules() {
+fn start_init() {
     // 1. Retrieve the initramfs module data from Limine
     let modules = MODULES.response().expect("Failed to get Limine modules").modules();
     if modules.is_empty() {
@@ -288,18 +290,11 @@ fn start_modules() {
     initramfs.set_mb_id(mb_id);
     
     // 4. Create a RootReg and mount it under the custom name "irfs"
-    let roots = vfs::RootReg::new();
-    roots.mount("irfs".to_string(), vfs::InodeId(0, mb_id));
+    let roots = &current_process().expect("No current process").roots;
+    roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
-    let (root, mb) = match vfs::resolve_absolute(&roots, "irfs:/") {
-        Ok((iid, mb)) => { (iid, mb) },
-        Err(e) => panic!("Can't resolve root: {:?}", e),
-    };
-
-    for e in vfs::listdir(&mb, root) {
-        warn!("- {}", e.0);
-    }
+    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
     
     sched::exit(0);
 }
@@ -318,7 +313,7 @@ fn start_modules() {
 fn init() {
     ebus::init();
 
-    start_modules();
+    start_init();
 
     sched::exit(0);
 }

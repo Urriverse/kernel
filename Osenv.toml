@@ -1,0 +1,3 @@
+[commands]
+build   = [ "make", "-f",   "etc/Makefile", "build" ]
+test    = [ "make", "-f",   "etc/Makefile", "test"  ]

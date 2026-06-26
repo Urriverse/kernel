@@ -12,6 +12,7 @@ limine = "0"
 x86 = "0"
 x86_64 = "0"
 acpi = {{ version = "6", features = ["alloc"] }}
+elf = {{ version = "0", default-features = false }}
 
 [profile.dev]
 panic = "abort"
@@ -34,3 +35,11 @@ inherits = "release"
 [features]
 lowlog = []
 devlog = []
+
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "link-arg=-Tetc/linker.ld", 
+    "-C", "relocation-model=static", 
+    "-C", "code-model=kernel", 
+    "-C", "no-redzone=y",
+]
