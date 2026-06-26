@@ -26,12 +26,6 @@ overflow-checks = false
 lto = false  # LTO makes kernel slower!
 panic = 'abort'
 
-[profile.dbg]
-inherits = "dev"
-
-[profile.dev-release]
-inherits = "release"
-
 [features]
 lowlog = []
 devlog = []
