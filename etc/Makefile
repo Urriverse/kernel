@@ -1,4 +1,5 @@
-KERNEL_PROFILE ?= debug
+PROFILE ?= debug
+KERNEL_PROFILE ?= $(PROFILE)
 BUILD_PATH ?= target
 
 build:
