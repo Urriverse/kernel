@@ -290,7 +290,7 @@ pub fn export<F>(id: u64, f: &'static F) -> Option<Symbol> {
 ///
 /// # Panics
 /// Panics if called from a context that is not a kernel module (no current process).
-pub fn suicide() -> ! {
+pub fn suicide(exit_code: i32) -> ! {
     if let Some(proc) = current_process() {
         for (_, sym) in GSTAB.read().iter() {
             if sym.mprc == addr_of!(proc.rc) {
@@ -302,7 +302,7 @@ pub fn suicide() -> ! {
         loop {
             crate::sched::yield_now();
             if proc.rc.load(Relaxed) == 0 {
-                crate::sched::exit(0);
+                crate::sched::exit(exit_code);
             }
         }
     } else {

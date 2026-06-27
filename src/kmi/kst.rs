@@ -12,7 +12,7 @@ pub struct KeSysTab {
     pub link_guard:         fn(&SymbolHandle) -> SymbolGuard,
     pub link_guard_get:     fn(&SymbolGuard) -> &fn(),
     pub export:             fn(u64, &'static fn()) -> Option<Symbol>,
-    pub suicide:            fn() -> !,
+    pub suicide:            fn(i32) -> !,
     pub log:                fn(u8, &'static str, &'static str, u32, &core::fmt::Arguments) -> (),
     pub panic:              fn(&core::panic::PanicInfo) -> !,
 }
