@@ -332,6 +332,7 @@ pub fn link(id: u64) -> Option<SymbolHandle> {
 /// `kernel.export`, `kernel.link`, and `self.suicide` symbols available to
 /// modules.
 pub fn init() {
+    debug!("### {} {}", size_of::<export::<fn() -> ()>>(), size_of::<link>());
     export(hash!(b"kernel.export"), &export::<fn() -> ()>);
     export(hash!(b"kernel.link"), &link);
     export(hash!(b"self.suicide"), &suicide);
