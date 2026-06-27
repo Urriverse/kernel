@@ -265,7 +265,6 @@ entry! {
 
 fn init() {
     ebus::init();
-    kmi::init();
 
     // 1. Retrieve the initramfs module data from Limine
     let modules = MODULES.response().expect("Failed to get Limine modules").modules();
@@ -287,7 +286,15 @@ fn init() {
     roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
-    // let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
+    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
+
+    let size = vfs::stat(&mb, init).expect("Can't stat init inode").size;
+
+    let mut buffer = [0u8].repeat(size as usize);
+
+    vfs::read(&mb, init, 0, &mut buffer).expect("Failed to read init");
+
+    kmi::init(&buffer);
     
     sched::exit(0);
 }

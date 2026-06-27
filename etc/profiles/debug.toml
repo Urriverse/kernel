@@ -1,9 +1,0 @@
-[profile]
-description = "Profile for debugging on real hardware."
-
-[env]
-PROFILE = "debug"
-
-[cargo]
-profile = "dbg"
-features = [ "devlog" ]

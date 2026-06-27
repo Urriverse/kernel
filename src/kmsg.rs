@@ -181,6 +181,7 @@ pub trait Sink: Sync {
 /// `Trace` the least. The `Debug` and `Trace` levels are disabled when the
 /// `lowlog` feature is enabled.
 #[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum AttLvl {
     /// Unrecoverable error – system will panic or halt.
     Panic,
