@@ -136,11 +136,11 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
         for sym in syms.iter() {
             if let Ok(dirty_name) = strtab.get(sym.st_name as usize) {
                 let name = dirty_name.trim();
-                debug!("+ {:?} -> {:p}", name, sym.st_value as usize as *const ());
+                // debug!("+ {:?} -> {:p}", name, sym.st_value as usize as *const ());
                 if name.trim() == "_start" {
                     entry_vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
                     found = true;
-                    info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
+                    debug!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
                 } else if name == "MODNAME" {
                     modname = *Vaddr
                         ::from_raw(
@@ -149,7 +149,7 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
                         )
                             .to_ref();
                 } else if SYMTAB.contains_key(name) {
-                    info!("Detected symbol {:?}, linking", name);
+                    debug!("Resolved symbol {:?}, linking", name);
                     *Vaddr
                         ::from_raw(
                             hhdm_base
