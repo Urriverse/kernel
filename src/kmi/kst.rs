@@ -13,11 +13,11 @@ pub struct KeSysTab {
     pub link_guard_get:     fn(&SymbolGuard) -> &fn(),
     pub export:             fn(u64, &'static fn()) -> Option<Symbol>,
     pub suicide:            fn() -> !,
-    pub log:                fn(u8, &'static str, &'static str, u32, *const ()) -> (),
+    pub log:                fn(u8, &'static str, &'static str, u32, &core::fmt::Arguments) -> (),
 }
 
-fn log_wrapper(lv: u8, mp: &'static str, f: &'static str, l: u32, a: *const ()) -> () {
-    crate::kmsg::log(unsafe { to(lv) }, mp, f, l, *unsafe { (a as *const core::fmt::Arguments<'static>).as_ref_unchecked() });
+fn log_wrapper(lv: u8, mp: &'static str, f: &'static str, l: u32, a: &core::fmt::Arguments) -> () {
+    crate::kmsg::log(unsafe { to(lv) }, mp, f, l, *a);
 }
 
 pub static KST: KeSysTab = KeSysTab {
