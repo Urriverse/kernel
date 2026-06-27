@@ -1,11 +1,18 @@
-use core::ptr::addr_of;
-
 use alloc::sync::Arc;
-use crate::kmi::kst::KST;
 use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
 use crate::sched::task::TaskId;
+
+lazy_static! {
+    static ref SYMTAB: alloc::collections::BTreeMap<&'static str, usize> = auto_btm!
+    {
+        "k_panic"   =>  crate::rt::panic::panic as *const () as usize,
+        "k_malloc"  =>  crate::mem::soa::alloc  as *const () as usize,
+        "k_free"    =>  crate::mem::soa::free   as *const () as usize,
+        "k_exit"    =>  crate::sched::exit      as *const () as usize,
+    };
+}
 
 pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     debug!("Loading module");
@@ -126,20 +133,29 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     
     if let Ok(Some((syms, strtab))) = bytes.symbol_table() {
         for sym in syms.iter() {
-            if let Ok(name) = strtab.get(sym.st_name as usize) {
-                debug!("+ {:?}", name);
-                if name == "module_start" {
+            if let Ok(dirty_name) = strtab.get(sym.st_name as usize) {
+                let name = dirty_name.trim();
+                debug!("+ {:?} -> {:p}", name, sym.st_value as usize as *const ());
+                if name.trim() == "_start" {
                     entry_vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
                     found = true;
                     info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
-                }
-                if name == "SYSTAB" {
-                    let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
-                    *Vaddr::from_raw(vaddr).to_ref_mut::<*const super::kst::KeSysTab>() = addr_of!(*KST);
-                }
-                if name == "MODNAME" {
-                    let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
-                    modname = *Vaddr::from_raw(vaddr).to_ref::<&'static str>();
+                } else if name == "MODNAME" {
+                    modname = *Vaddr
+                        ::from_raw(
+                            hhdm_base
+                                .wrapping_add(sym.st_value as usize)
+                        )
+                            .to_ref();
+                } else if SYMTAB.contains_key(name) {
+                    info!("Detected symbol {:?}, linking", name);
+                    *Vaddr
+                        ::from_raw(
+                            hhdm_base
+                                .wrapping_add(sym.st_value as usize)
+                        )
+                            .to_ref_mut()
+                    =   SYMTAB[name];
                 }
             }
         }

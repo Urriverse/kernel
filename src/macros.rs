@@ -254,7 +254,7 @@ macro_rules! limine {
 }
 
 // ============================================================================
-// FUEUE BARRIER MACRO
+// BARRIER MACRO
 // ============================================================================
 
 /// Declares one or more static `Barrier` barriers.
@@ -305,5 +305,20 @@ macro_rules! hash {
             hash
         }
         fnv1a64($s)
+    }};
+}
+
+#[macro_export]
+macro_rules! auto_btm {
+    (
+        $(
+            $k:expr => $v:expr
+        ),* $(,)?
+    ) => {{
+        let mut map = ::alloc::collections::BTreeMap::new();
+        $(
+            map.insert($k, $v);
+        )*
+        map
     }};
 }
