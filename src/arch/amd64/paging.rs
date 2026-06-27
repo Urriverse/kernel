@@ -401,7 +401,7 @@ pub fn walk_entry_mut(
             Vaddr::from_ref(new_tab).to_phys(),
             EntryFlags::PRESENT | EntryFlags::WRITABLE,
         );
-        debug!("Created PDPT[{}] for vaddr {:#X}", pdpt_idx, vaddr);
+        // debug!("Created PDPT[{}] for vaddr {:#X}", pdpt_idx, vaddr);
     }
     if unlikely(is_huge(pdpt_entry)) {
         return Err("1 GiB huge page encountered - split first");
