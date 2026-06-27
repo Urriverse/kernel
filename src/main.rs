@@ -286,7 +286,7 @@ fn init() {
     roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
-    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
+    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/modules/km-init").expect("Can't resolve init");
 
     let size = vfs::stat(&mb, init).expect("Can't stat init inode").size;
 
