@@ -1,3 +1,3 @@
 mod entry;
-mod panic;
+pub mod panic;
 pub mod gall;

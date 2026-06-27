@@ -14,6 +14,7 @@ pub struct KeSysTab {
     pub export:             fn(u64, &'static fn()) -> Option<Symbol>,
     pub suicide:            fn() -> !,
     pub log:                fn(u8, &'static str, &'static str, u32, &core::fmt::Arguments) -> (),
+    pub panic:              fn(&core::panic::PanicInfo) -> !,
 }
 
 fn log_wrapper(lv: u8, mp: &'static str, f: &'static str, l: u32, a: &core::fmt::Arguments) -> () {
@@ -27,4 +28,5 @@ pub static KST: KeSysTab = KeSysTab {
     export: crate::kmi::kmdl::export::<fn()->()>,
     suicide: crate::kmi::kmdl::suicide,
     log: log_wrapper,
+    panic: crate::rt::panic::panic,
 };

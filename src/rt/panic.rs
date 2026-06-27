@@ -60,7 +60,7 @@ static PANIC_LOCK: Nutex<()> = Nutex::new(());
 
 #[panic_handler]
 #[allow(static_mut_refs)]
-fn panic(info: &core::panic::PanicInfo) -> ! {
+pub fn panic(info: &core::panic::PanicInfo) -> ! {
     let _g1 = PANIC_LOCK.lock();
     let _g2 = kmsg::SINKS.lock();
     let loc = *info.location().unwrap();

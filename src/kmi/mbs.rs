@@ -1,4 +1,8 @@
+use core::ptr::addr_of;
+
 use alloc::sync::Arc;
+use crate::kmi::kst::KST;
+use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
 
@@ -129,6 +133,10 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
                     found = true;
                     info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
                     break;
+                }
+                if name == "SYSTAB" {
+                    let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
+                    *Vaddr::from_raw(vaddr).to_ref_mut::<usize>() = addr_of!(KST) as *const () as usize;
                 }
             }
         }
