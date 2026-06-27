@@ -294,6 +294,7 @@ fn start_init() {
     roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
+    #[allow(unused)]
     let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
     
     sched::exit(0);
