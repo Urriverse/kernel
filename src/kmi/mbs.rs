@@ -127,8 +127,8 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     if let Ok(Some((syms, strtab))) = bytes.symbol_table() {
         for sym in syms.iter() {
             if let Ok(name) = strtab.get(sym.st_name as usize) {
-                debug!("+ {:?}", name);
-                if name == "_start" {
+                // debug!("+ {:?}", name);
+                if name == "module_start" {
                     entry_vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
                     found = true;
                     info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
