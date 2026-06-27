@@ -12,8 +12,8 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0;
     
-    for pt in bytes.segments().iter() {
-        for phdr in pt.iter() {
+    if let Some(segments) = bytes.segments() {
+        for phdr in segments.iter() {
             if phdr.p_type == 1 { // PT_LOAD
                 let start = phdr.p_vaddr as usize;
                 let end = start + phdr.p_memsz as usize;
@@ -41,18 +41,15 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
         return Err(3);
     }
     
-    // The unique base offset in HHDM. Because UPA allocates unique physical frames,
-    // this HHDM address is guaranteed to be globally unique and will never clash.
     let hhdm_base = paddr.to_virt().to_raw();
     
     // 4. Load segments into the HHDM region
-    // Zero out the entire allocation first (handles BSS and gaps between segments)
     unsafe {
         core::ptr::write_bytes(hhdm_base as *mut u8, 0, total_size);
     }
     
-    for pt in bytes.segments().iter() {
-        for phdr in pt.iter() {
+    if let Some(segments) = bytes.segments() {
+        for phdr in segments.iter() {
             if phdr.p_type == 1 { // PT_LOAD
                 let offset_in_module = (phdr.p_vaddr as usize).wrapping_sub(aligned_min);
                 let dst_vaddr = hhdm_base.wrapping_add(offset_in_module);
@@ -67,21 +64,26 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
         }
     }
     
-    // 5. Apply R_X86_64_RELATIVE relocations (MANDATORY for PIE/ET_DYN binaries)
-    // Formula: B + A (Base address + Addend). The result overwrites the memory at r_offset.
+    // 5. Apply Relocations (Handles PIE binaries)
     if let Some(section_headers) = bytes.section_headers() {
         for shdr in section_headers.iter() {
             if shdr.sh_type == 4 { // SHT_RELA
                 if let Ok(relas) = bytes.section_data_as_relas(&shdr) {
                     for rela in relas {
-                        if rela.r_type == 8 { // R_X86_64_RELATIVE
-                            let offset = rela.r_offset as usize;
-                            let dst_vaddr = hhdm_base.wrapping_add(offset);
-                            
-                            // B (hhdm_base) + A (r_addend)
-                            let new_val = hhdm_base.wrapping_add(rela.r_addend as usize);
-                            
-                            unsafe { *(dst_vaddr as *mut usize) = new_val; }
+                        let offset = rela.r_offset as usize;
+                        let dst_vaddr = hhdm_base.wrapping_add(offset);
+                        
+                        match rela.r_type {
+                            8 => { // R_X86_64_RELATIVE (Base + Addend)
+                                let new_val = hhdm_base.wrapping_add(rela.r_addend as usize);
+                                unsafe { *(dst_vaddr as *mut usize) = new_val; }
+                            }
+                            1 => { // R_X86_64_64 (Symbol + Addend)
+                                // For local symbols in PIE, this effectively acts like RELATIVE
+                                let new_val = hhdm_base.wrapping_add(rela.r_addend as usize);
+                                unsafe { *(dst_vaddr as *mut usize) = new_val; }
+                            }
+                            _ => {} // Ignore other types for now
                         }
                     }
                 }
@@ -92,47 +94,62 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
     // 6. Reprotect existing HHDM pages if needed
     {
         let mut ptm = crate::mem::PTM.lock();
-        for pt in bytes.segments().iter() {
-            for phdr in pt.iter() {
+        if let Some(segments) = bytes.segments() {
+            for phdr in segments.iter() {
                 if phdr.p_type == 1 { // PT_LOAD
                     let offset_in_module = (phdr.p_vaddr as usize).wrapping_sub(aligned_min);
                     let dst_vaddr = hhdm_base.wrapping_add(offset_in_module);
                     
-                    // Align the segment bounds to pages for remapping
                     let seg_start = dst_vaddr & !0xFFF;
                     let seg_end = (dst_vaddr + phdr.p_memsz as usize + 0xFFF) & !0xFFF;
                     let size = seg_end - seg_start;
                     
-                    // Keep HHDM's default PRESENT | WRITABLE, but enforce W^X
                     let mut flags = EntryFlags::PRESENT | EntryFlags::WRITABLE;
-                    // PF_X = 1. If not executable, add NO_EXECUTE.
-                    if phdr.p_flags & 1 == 1 { 
-                        flags &= !EntryFlags::NO_EXECUTE;
+                    if phdr.p_flags & 1 == 0 { // PF_X == 0
+                        flags |= EntryFlags::NO_EXECUTE;
                     }
                     
-                    // try_remap walks the existing HHDM page tables and updates the flags.
                     let _ = ptm.try_remap(seg_start, size, flags);
                 }
             }
         }
     }
     
-    // 7. Resolve the Entry Point
-    let entry_offset = (bytes.ehdr.e_entry as usize).wrapping_sub(aligned_min);
-    let entry_vaddr = hhdm_base.wrapping_add(entry_offset);
+    // 7. Resolve the Entry Point by Symbol Name (CRITICAL FIX)
+    // Relying on e_entry is dangerous for Rust modules as it often points to a dummy _start stub.
+    let mut entry_vaddr = 0;
+    let mut found = false;
+    
+    if let Ok(Some((syms, strtab))) = bytes.symbol_table() {
+        for sym in syms.iter() {
+            if let Ok(name) = strtab.get(sym.st_name as usize) {
+                // Look for your actual module initialization function
+                if name == "_start" {
+                    entry_vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
+                    found = true;
+                    info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
+                    break;
+                }
+            }
+        }
+    }
+    
+    if !found {
+        // Fallback to e_entry if the symbol wasn't found
+        let entry_offset = (bytes.ehdr.e_entry as usize).wrapping_sub(aligned_min);
+        entry_vaddr = hhdm_base.wrapping_add(entry_offset);
+        warn!("Entry point symbol not found, falling back to e_entry: {:#X}", entry_vaddr);
+    }
     
     if entry_vaddr < hhdm_base || entry_vaddr >= hhdm_base + total_size {
-        error!("Module entry point {:#X} is outside loaded bounds", bytes.ehdr.e_entry);
+        error!("Module entry point {:#X} is outside loaded bounds", entry_vaddr);
         return Err(4);
     }
     
-    // Cast the HHDM entry point to a function pointer
     let entry_fn: fn(usize) = unsafe { core::mem::transmute(entry_vaddr) };
-    // Pass the address of the Kernel System Table (KST) as the first parameter
     let arg = &crate::kmi::kst::KST as *const _ as usize;
     
     // 8. Create a separated process and spawn the task
-    // This gives the module its own Process::rc for the KMI suicide/unload mechanism
     let proc = Arc::new(Process::new());
     
     // Allocate a kernel stack for the module task
@@ -143,8 +160,10 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
         error!("OOM while allocating module stack");
         return Err(5);
     }
-    let stack_top = stack_paddr.to_virt().to_raw() - 1 + stack_size;
-    let stack_top = stack_top - stack_top % 8;
+    
+    // FIX: Properly calculate the top of the stack and align to 16 bytes (System V ABI requirement)
+    let stack_base = stack_paddr.to_virt().to_raw();
+    let stack_top = (stack_base + stack_size) & !0xF; 
     
     let mut task = crate::sched::task::Task::new_kernel_with_arg(
         entry_fn,
@@ -154,10 +173,8 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
         "km-init"
     );
     
-    // Assign the separated process to the task
     task.process = proc.clone();
     
-    // Spawn the task on CPU 0
     let id = task.id;
     crate::sched::rq::RUNQUEUES[0].lock().spawn_task(task);
     
