@@ -194,7 +194,7 @@ impl SymbolGuard {
     /// # Panics
     /// Panics if `size_of::<F>() != size_of::<fn() -> ()>()`.
     pub fn get<F>(&self) -> &F {
-        if size_of::<F>() != size_of::<fn() -> ()>() {
+        if size_of::<F>() != 0 {
             panic!("Invalid downcast: size mismatch");
         }
         unsafe { (self.v as *const F).as_ref_unchecked() }
@@ -255,9 +255,9 @@ static SPUR: AtomicUsize = AtomicUsize::new(0);
 /// with no previous entry.
 ///
 /// # Panics
-/// Panics if `size_of::<F>() != size_of::<fn() -> ()>()`.
+/// Panics if `size_of::<F>() != size_of::<Fn() -> ()>()`.
 pub fn export<F>(id: u64, f: &'static F) -> Option<Symbol> {
-    if size_of::<F>() != size_of::<fn() -> ()>() {
+    if size_of::<F>() != 0 {
         panic!("Invalid upcast: size mismatch");
     }
 
