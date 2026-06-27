@@ -52,11 +52,11 @@
 macro_rules! trace {
     (str $s:expr) => {{
         #[cfg(not(feature = "lowlog"))]
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Trace, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Trace, concat!("kernel::", concat!("kernel::", module_path!())), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
         #[cfg(not(feature = "lowlog"))]
-        $crate::kmsg::log($crate::kmsg::AttLvl::Trace, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Trace, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
@@ -74,11 +74,11 @@ macro_rules! trace {
 macro_rules! debug {
     (str $s:expr) => {{
         #[cfg(not(feature = "lowlog"))]
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Debug, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Debug, concat!("kernel::", module_path!()), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
         #[cfg(not(feature = "lowlog"))]
-        $crate::kmsg::log($crate::kmsg::AttLvl::Debug, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Debug, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
@@ -95,10 +95,10 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! info {
     (str $s:expr) => {{
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Info, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Info, concat!("kernel::", module_path!()), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
-        $crate::kmsg::log($crate::kmsg::AttLvl::Info, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Info, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
@@ -115,10 +115,10 @@ macro_rules! info {
 #[macro_export]
 macro_rules! warn {
     (str $s:expr) => {{
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Warn, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Warn, concat!("kernel::", module_path!()), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
-        $crate::kmsg::log($crate::kmsg::AttLvl::Warn, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Warn, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
@@ -135,10 +135,10 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! error {
     (str $s:expr) => {{
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Error, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Error, concat!("kernel::", module_path!()), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
-        $crate::kmsg::log($crate::kmsg::AttLvl::Error, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Error, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
@@ -149,10 +149,10 @@ macro_rules! error {
 #[macro_export]
 macro_rules! __panic_msg {
     (str $s:expr) => {{
-        $crate::kmsg::str_log($crate::kmsg::AttLvl::Panic, module_path!(), file!(), line!(), $s);
+        $crate::kmsg::str_log($crate::kmsg::AttLvl::Panic, concat!("kernel::", module_path!()), file!(), line!(), $s);
     }};
     ($($arg:tt)+) => {{
-        $crate::kmsg::log($crate::kmsg::AttLvl::Panic, module_path!(), file!(), line!(), format_args!($($arg)+));
+        $crate::kmsg::log($crate::kmsg::AttLvl::Panic, concat!("kernel::", module_path!()), file!(), line!(), format_args!($($arg)+));
     }};
 }
 
