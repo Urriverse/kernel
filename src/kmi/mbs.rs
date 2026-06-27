@@ -1,10 +1,9 @@
 use alloc::sync::Arc;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
-use crate::sched::task::TaskId;
 
-pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
-    debug!("Loading module (single-alloc HHDM mode)...");
+pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
+    debug!("Loading module");
     
     // 1. Parse the ELF file
     let bytes = elf::ElfBytes::<elf::endian::NativeEndian>::minimal_parse(elf).map_err(|_| 1usize)?;
@@ -29,7 +28,7 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
         return Err(2);
     }
     
-    // Align boundaries to page size to ensure clean mapping
+    // Align boundaries to page size
     let aligned_min = min_vaddr & !0xFFF;
     let aligned_max = (max_vaddr + 0xFFF) & !0xFFF;
     let total_size = aligned_max - aligned_min;
@@ -55,8 +54,8 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     for pt in bytes.segments().iter() {
         for phdr in pt.iter() {
             if phdr.p_type == 1 { // PT_LOAD
-                let offset_in_module = (phdr.p_vaddr as usize) - aligned_min;
-                let dst_vaddr = hhdm_base + offset_in_module;
+                let offset_in_module = (phdr.p_vaddr as usize).wrapping_sub(aligned_min);
+                let dst_vaddr = hhdm_base.wrapping_add(offset_in_module);
                 
                 if phdr.p_filesz > 0 {
                     let src = &elf[(phdr.p_offset as usize)..((phdr.p_offset + phdr.p_filesz) as usize)];
@@ -67,25 +66,21 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
             }
         }
     }
-
-    // 4.5. Apply R_X86_64_RELATIVE relocations (MANDATORY for PIE/ET_DYN binaries)
+    
+    // 5. Apply R_X86_64_RELATIVE relocations (MANDATORY for PIE/ET_DYN binaries)
+    // Formula: B + A (Base address + Addend). The result overwrites the memory at r_offset.
     if let Some(section_headers) = bytes.section_headers() {
         for shdr in section_headers.iter() {
-            // Look for relocation sections (.rela.dyn, .rela.plt)
-            if shdr.sh_type == elf::abi::SHT_RELA {
+            if shdr.sh_type == 4 { // SHT_RELA
                 if let Ok(relas) = bytes.section_data_as_relas(&shdr) {
                     for rela in relas {
-                        // R_X86_64_RELATIVE = 8
-                        if rela.r_type == 8 {
+                        if rela.r_type == 8 { // R_X86_64_RELATIVE
                             let offset = rela.r_offset as usize;
-                            let dst_vaddr = hhdm_base + offset;
+                            let dst_vaddr = hhdm_base.wrapping_add(offset);
                             
-                            // Read the current value (which is 0 or a relative offset)
-                            let current_val = unsafe { *(dst_vaddr as *const usize) };
-                            // Add the HHDM base address to relocate it
-                            let new_val = current_val.wrapping_add(hhdm_base);
+                            // B (hhdm_base) + A (r_addend)
+                            let new_val = hhdm_base.wrapping_add(rela.r_addend as usize);
                             
-                            // Write the corrected absolute virtual address back
                             unsafe { *(dst_vaddr as *mut usize) = new_val; }
                         }
                     }
@@ -93,36 +88,38 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
             }
         }
     }
-    
-    // 5. Reprotect existing HHDM pages if needed
-    // HHDM is RW by default. We just update the existing PTEs to add NO_EXECUTE 
-    // for non-executable segments, saving memory by not allocating new page tables.
+
+    // 6. Reprotect existing HHDM pages if needed
     {
         let mut ptm = crate::mem::PTM.lock();
         for pt in bytes.segments().iter() {
             for phdr in pt.iter() {
                 if phdr.p_type == 1 { // PT_LOAD
-                    let offset_in_module = (phdr.p_vaddr as usize) - aligned_min;
-                    let dst_vaddr = hhdm_base + offset_in_module;
-                    let size = (phdr.p_memsz as usize + 0xFFF) & !0xFFF;
+                    let offset_in_module = (phdr.p_vaddr as usize).wrapping_sub(aligned_min);
+                    let dst_vaddr = hhdm_base.wrapping_add(offset_in_module);
+                    
+                    // Align the segment bounds to pages for remapping
+                    let seg_start = dst_vaddr & !0xFFF;
+                    let seg_end = (dst_vaddr + phdr.p_memsz as usize + 0xFFF) & !0xFFF;
+                    let size = seg_end - seg_start;
                     
                     // Keep HHDM's default PRESENT | WRITABLE, but enforce W^X
                     let mut flags = EntryFlags::PRESENT | EntryFlags::WRITABLE;
-                    if phdr.p_flags & 0x1 == 0 { // PF_X == 0
-                        flags |= EntryFlags::NO_EXECUTE;
+                    // PF_X = 1. If not executable, add NO_EXECUTE.
+                    if phdr.p_flags & 1 == 1 { 
+                        flags &= !EntryFlags::NO_EXECUTE;
                     }
                     
                     // try_remap walks the existing HHDM page tables and updates the flags.
-                    // If it hits a huge page (2M/1G), it will split it only if necessary.
-                    let _ = ptm.try_remap(dst_vaddr, size, flags);
+                    let _ = ptm.try_remap(seg_start, size, flags);
                 }
             }
         }
     }
     
-    // 6. Resolve the Entry Point
-    let entry_offset = (bytes.ehdr.e_entry as usize) - aligned_min;
-    let entry_vaddr = hhdm_base + entry_offset;
+    // 7. Resolve the Entry Point
+    let entry_offset = (bytes.ehdr.e_entry as usize).wrapping_sub(aligned_min);
+    let entry_vaddr = hhdm_base.wrapping_add(entry_offset);
     
     if entry_vaddr < hhdm_base || entry_vaddr >= hhdm_base + total_size {
         error!("Module entry point {:#X} is outside loaded bounds", bytes.ehdr.e_entry);
@@ -134,7 +131,8 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     // Pass the address of the Kernel System Table (KST) as the first parameter
     let arg = &crate::kmi::kst::KST as *const _ as usize;
     
-    // 7. Create a separated process and spawn the task
+    // 8. Create a separated process and spawn the task
+    // This gives the module its own Process::rc for the KMI suicide/unload mechanism
     let proc = Arc::new(Process::new());
     
     // Allocate a kernel stack for the module task
@@ -165,5 +163,5 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     
     info!("Module loaded at HHDM {:#X} (size {} KiB), task ID: {:?}", hhdm_base, total_size / 1024, id);
     
-    Ok(id)
+    Ok(proc)
 }
