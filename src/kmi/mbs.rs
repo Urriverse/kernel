@@ -120,8 +120,6 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
         }
     }
     
-    // 7. Resolve the Entry Point by Symbol Name (CRITICAL FIX)
-    // Relying on e_entry is dangerous for Rust modules as it often points to a dummy _start stub.
     let mut entry_vaddr = 0;
     let mut found = false;
     let mut modname = "unknown";
@@ -130,12 +128,10 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
         for sym in syms.iter() {
             if let Ok(name) = strtab.get(sym.st_name as usize) {
                 debug!("+ {:?}", name);
-                // Look for your actual module initialization function
                 if name == "_start" {
                     entry_vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
                     found = true;
                     info!("Resolved entry point symbol '{}' at {:#X}", name, entry_vaddr);
-                    break;
                 }
                 if name == "SYSTAB" {
                     let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
