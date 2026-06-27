@@ -1,8 +1,9 @@
 use alloc::sync::Arc;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
+use crate::sched::task::TaskId;
 
-pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
+pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     debug!("Loading module (single-alloc HHDM mode)...");
     
     // 1. Parse the ELF file
@@ -61,6 +62,32 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
                     let src = &elf[(phdr.p_offset as usize)..((phdr.p_offset + phdr.p_filesz) as usize)];
                     unsafe {
                         core::ptr::copy_nonoverlapping(src.as_ptr(), dst_vaddr as *mut u8, phdr.p_filesz as usize);
+                    }
+                }
+            }
+        }
+    }
+
+    // 4.5. Apply R_X86_64_RELATIVE relocations (MANDATORY for PIE/ET_DYN binaries)
+    if let Some(section_headers) = bytes.section_headers() {
+        for shdr in section_headers.iter() {
+            // Look for relocation sections (.rela.dyn, .rela.plt)
+            if shdr.sh_type == elf::abi::SHT_RELA {
+                if let Ok(relas) = bytes.section_data_as_relas(&shdr) {
+                    for rela in relas {
+                        // R_X86_64_RELATIVE = 8
+                        if rela.r_type == 8 {
+                            let offset = rela.r_offset as usize;
+                            let dst_vaddr = hhdm_base + offset;
+                            
+                            // Read the current value (which is 0 or a relative offset)
+                            let current_val = unsafe { *(dst_vaddr as *const usize) };
+                            // Add the HHDM base address to relocate it
+                            let new_val = current_val.wrapping_add(hhdm_base);
+                            
+                            // Write the corrected absolute virtual address back
+                            unsafe { *(dst_vaddr as *mut usize) = new_val; }
+                        }
                     }
                 }
             }
@@ -138,5 +165,5 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
     
     info!("Module loaded at HHDM {:#X} (size {} KiB), task ID: {:?}", hhdm_base, total_size / 1024, id);
     
-    Ok(proc)
+    Ok(id)
 }

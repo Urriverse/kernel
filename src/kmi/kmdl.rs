@@ -78,6 +78,8 @@ pub struct Symbol {
     /// No new `SymbolHandle` can be obtained for a poisonous symbol.
     poisonous: AtomicBool,
 
+    _pad: [u8; 3],
+
     /// Unique identifier for this symbol. Used as the key in the global table.
     id: u64,
 }
@@ -95,6 +97,7 @@ impl Symbol {
             rc: AtomicUsize::new(1),
             ptr,
             poisonous: AtomicBool::new(false),
+            _pad: [0; 3],
             id,
         }
     }
