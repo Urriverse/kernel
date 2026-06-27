@@ -124,6 +124,7 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     // Relying on e_entry is dangerous for Rust modules as it often points to a dummy _start stub.
     let mut entry_vaddr = 0;
     let mut found = false;
+    let mut modname = "unknown";
     
     if let Ok(Some((syms, strtab))) = bytes.symbol_table() {
         for sym in syms.iter() {
@@ -137,7 +138,11 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
                 }
                 if name == "SYSTAB" {
                     let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
-                    *Vaddr::from_raw(vaddr).to_ref_mut::<usize>() = addr_of!(KST) as *const () as usize;
+                    *Vaddr::from_raw(vaddr).to_ref_mut::<*const super::kst::KeSysTab>() = addr_of!(*KST);
+                }
+                if name == "MODNAME" {
+                    let vaddr = hhdm_base.wrapping_add(sym.st_value as usize);
+                    modname = *Vaddr::from_raw(vaddr).to_ref::<&'static str>();
                 }
             }
         }
@@ -165,7 +170,7 @@ pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
         entry_fn,
         stack_top,
         crate::sched::task::Priority(0),
-        "km-init"
+        modname,
     );
     
     task.process = proc.clone();

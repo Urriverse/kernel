@@ -328,14 +328,3 @@ pub fn link(id: u64) -> Option<SymbolHandle> {
     }
     None
 }
-
-/// Initialises the KMI by exporting the core system functions.
-///
-/// This must be called early during kernel initialisation to make the
-/// `kernel.export`, `kernel.link`, and `self.suicide` symbols available to
-/// modules.
-pub fn init() {
-    export(hash!(b"kernel.export"), &export::<fn() -> ()>);
-    export(hash!(b"kernel.link"), &link);
-    export(hash!(b"self.suicide"), &suicide);
-}
