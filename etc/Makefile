@@ -5,7 +5,7 @@ RUSTFLAGS += "-C link-arg=-Tetc/linker.ld -C relocation-model=static -C code-mod
 
 build:
 	@CARGO_TARGET_DIR="$(BUILD_PATH)" cargo build $(KERNEL_CARGO_ARGS) --target x86_64-unknown-none
-	@if [ ! -z "$(ARTEFACT_PATH)" ]; then echo "$(BUILD_PATH)/kernel/x86_64-unknown-none/$(KERNEL_PROFILE)/kernel" > $(ARTEFACT_PATH); fi
+	@if [ ! -z "$(ARTEFACT_PATH)" ]; then echo "$(BUILD_PATH)/x86_64-unknown-none/$(KERNEL_PROFILE)/kernel" > $(ARTEFACT_PATH); fi
 
 test:
 	@cargo test
