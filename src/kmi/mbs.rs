@@ -11,6 +11,7 @@ lazy_static! {
         "k_malloc"  =>  crate::mem::soa::alloc  as *const () as usize,
         "k_free"    =>  crate::mem::soa::free   as *const () as usize,
         "k_exit"    =>  crate::sched::exit      as *const () as usize,
+        "k_log"     =>  crate::kmsg::log        as *const () as usize,
     };
 }
 
