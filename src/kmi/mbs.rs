@@ -5,8 +5,9 @@ use crate::kmi::kst::KST;
 use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
+use crate::sched::task::TaskId;
 
-pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
+pub fn run_module(elf: &[u8]) -> Result<TaskId, usize> {
     debug!("Loading module");
     
     // 1. Parse the ELF file
@@ -154,28 +155,14 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
         return Err(4);
     }
     
-    let entry_fn: fn(usize) = unsafe { core::mem::transmute(entry_vaddr) };
-    let arg = &crate::kmi::kst::KST as *const _ as usize;
+    let entry_fn: fn() = unsafe { core::mem::transmute(entry_vaddr) };
     
-    // 8. Create a separated process and spawn the task
     let proc = Arc::new(Process::new());
     
-    // Allocate a kernel stack for the module task
-    let stack_size = 32 * 1024;
-    let stack_pages = stack_size / 4096;
-    let stack_paddr = crate::mem::upa::alloc(stack_pages);
-    if stack_paddr.to_raw() == 0 {
-        error!("OOM while allocating module stack");
-        return Err(5);
-    }
+    let stack_top = crate::sched::allocate_kernel_stack(32 << 10);
     
-    // FIX: Properly calculate the top of the stack and align to 16 bytes (System V ABI requirement)
-    let stack_base = stack_paddr.to_virt().to_raw();
-    let stack_top = (stack_base + stack_size) & !0xF; 
-    
-    let mut task = crate::sched::task::Task::new_kernel_with_arg(
+    let mut task = crate::sched::task::Task::new_kernel(
         entry_fn,
-        arg,
         stack_top,
         crate::sched::task::Priority(0),
         "km-init"
@@ -188,5 +175,5 @@ pub fn run_module(elf: &[u8]) -> Result<Arc<Process>, usize> {
     
     info!("Module loaded at HHDM {:#X} (size {} KiB), task ID: {:?}", hhdm_base, total_size / 1024, id);
     
-    Ok(proc)
+    Ok(id)
 }

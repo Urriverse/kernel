@@ -44,7 +44,7 @@ pub fn init(ticks_per_10ms: u64) {
     crate::info!("Initialized with SMP Balancing");
 }
 
-fn allocate_kernel_stack(size: usize) -> usize {
+pub fn allocate_kernel_stack(size: usize) -> usize {
     let pages = size.div_ceil(4096);
     let paddr = crate::mem::upa::alloc(pages);
     if paddr.to_raw() == 0 { panic!("Failed to allocate kernel stack"); }
