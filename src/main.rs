@@ -208,6 +208,8 @@ entry! {
         let ticks_per_10ms = arch::timer::get_ticks_per_10ms();
         sched::init(ticks_per_10ms);
 
+        // now all processors are in `boot` task
+
         unsafe {
             sched::REAPER = sched::spawn_kernel_task(
                 reap,
@@ -238,19 +240,7 @@ entry! {
             None
         );
 
-        // let _ = sched::spawn_kernel_task(
-        //     ||loop{trace!("*")},
-        //     sched::task::Priority(18),
-        //     "-",
-        //     Some(
-        //         vfs::RootRef::new(
-        //             vfs::RootReg::new()
-        //         )
-        //     ),
-        //     None
-        // );
-
-        sched::exit(400);
+        sched::exit(0); // terminate `boot` task
     }
 
     for AP {
@@ -269,11 +259,14 @@ entry! {
 
         unsafe { core::arch::asm! { "sti" } }
 
-        sched::exit(400);
+        sched::exit(0); // terminate `boot` task
     }
 }
 
-fn start_init() {
+fn init() {
+    ebus::init();
+    kmi::init();
+
     // 1. Retrieve the initramfs module data from Limine
     let modules = MODULES.response().expect("Failed to get Limine modules").modules();
     if modules.is_empty() {
@@ -294,8 +287,7 @@ fn start_init() {
     roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
-    #[allow(unused)]
-    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
+    // let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/init").expect("Can't resolve init");
     
     sched::exit(0);
 }
@@ -311,14 +303,6 @@ fn start_init() {
 /// # Note
 /// This is a kernel task and never exits; it runs forever to ensure no
 /// zombies accumulate.
-fn init() {
-    ebus::init();
-
-    start_init();
-
-    sched::exit(0);
-}
-
 fn reap() {
     loop {
         if let Some((id, task)) = sched::wait_any() {

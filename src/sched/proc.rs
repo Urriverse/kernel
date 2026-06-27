@@ -1,3 +1,5 @@
+use core::sync::atomic::AtomicUsize;
+
 // src/sched/proc.rs
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -19,6 +21,7 @@ pub struct Process {
     pub syscall_handler: fn(&mut TrapFrame),
     pub roots: RootRef,
     pub level: u16,
+    pub rc: AtomicUsize,
 }
 
 static NEXT: Litex<u32> = Litex::new(0);
@@ -41,6 +44,7 @@ impl Process {
             syscall_handler: crate::sched::native_syscall_handler,
             roots: RootRef::new(RootReg::new()),
             level: 0,
+            rc: AtomicUsize::new(0),
         }
     }
 }
@@ -56,6 +60,7 @@ impl Clone for Process {
             syscall_handler: self.syscall_handler,
             roots: self.roots.clone(),
             level: self.level,
+            rc: AtomicUsize::new(0),
         }
     }
 }
@@ -63,8 +68,8 @@ impl Clone for Process {
 impl core::fmt::Display for Process {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!(
-            "Process {{ pid: {}, parent: {:?}, address_space: {}, threads (len): {} }}",
-            self.pid, self.parent, self.address_space.lock().exco.cr3, self.threads.len(),
+            "Process {{ pid: {}, parent: {:?}, address_space: {}, threads (len): {}, rc: {} }}",
+            self.pid, self.parent, self.address_space.lock().exco.cr3, self.threads.len(), self.rc.load(core::sync::atomic::Ordering::SeqCst)
         ))
     }
 }
