@@ -110,6 +110,10 @@ impl Polen {
             .expect("Polen::map failed");
     }
 
+    pub fn current() -> Self {
+        Self::from_exco(Exco::current())
+    }
+
     pub fn try_map(
         &mut self,
         vaddr: usize,
@@ -476,4 +480,24 @@ fn split_and_retry(polen: &mut Polen, vaddr: usize, ps: PageSize) -> Result<(), 
         PageSize::Size4K => {}
     }
     Ok(())
+}
+
+pub fn cur_try_map(va: usize, pa: usize, size: usize, flags: EntryFlags) -> Result<(), &'static str> {
+    Polen::current().try_map(va, Paddr::from_raw(pa), size, flags)
+}
+
+pub fn cur_try_remap(va: usize, size: usize, new_flags: EntryFlags) -> Result<(), &'static str> {
+    Polen::current().try_remap(va, size, new_flags)
+}
+
+pub fn cur_try_unmap(va: usize, size: usize) -> Result<(), &'static str> {
+    Polen::current().try_unmap(va, size)
+}
+
+pub fn merge_range(start: usize, size: usize) {
+    Polen::current().merge_range(start, size);
+}
+
+pub fn cur_query(va: usize) -> Option<(Paddr, EntryFlags)> {
+    Polen::current().query(va)
 }

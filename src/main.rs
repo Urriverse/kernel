@@ -54,9 +54,7 @@
 
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
-use alloc::{string::ToString as _, sync::Arc};
-
-use crate::sched::current_process;
+use alloc::{borrow::ToOwned as _, string::ToString as _, sync::Arc};
 
 // ============================================================================
 // EXTERNAL CRATES
@@ -211,10 +209,10 @@ entry! {
         // now all processors are in `boot` task
 
         unsafe {
-            sched::REAPER = sched::spawn_kernel_task(
+            sched::REAPER = sched::spawn(
                 reap,
                 sched::task::Priority(5),
-                "reaper",
+                "reaper".to_owned(),
                 None,
                 None
             );
@@ -228,10 +226,10 @@ entry! {
         // PHASE 7: Spawn the reaper task
         // --------------------------------------------------------------------
 
-        let _ = sched::spawn_kernel_task(
+        let _ = sched::spawn(
             init,
             sched::task::Priority(0),
-            "init",
+            "init".to_owned(),
             Some(
                 vfs::RootRef::new(
                     vfs::RootReg::new()
@@ -279,14 +277,12 @@ fn init() {
     
     // 3. Register it in the global VFS registry
     let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::FileSystem>);
-    initramfs.set_mb_id(mb_id);
     
     // 4. Create a RootReg and mount it under the custom name "irfs"
-    let roots = &current_process().expect("No current process").roots;
-    roots.mount("initramfs".to_string(), vfs::InodeId(0, mb_id));
+    vfs::mount("initramfs".to_string(), mb_id);
 
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
-    let (init, mb) = vfs::resolve_absolute(&roots, "initramfs:/modules/km-init").expect("Can't resolve init");
+    let (init, mb) = vfs::resolve("initramfs:/modules/km-init").expect("Can't resolve init");
 
     let size = vfs::stat(&mb, init).expect("Can't stat init inode").size;
 

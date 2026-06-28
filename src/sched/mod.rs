@@ -9,6 +9,7 @@ use crate::mem::vma::VmaFlags;
 use crate::sched::proc::Process;
 use crate::sync::Nutex;
 use crate::vfs::RootRef;
+use alloc::borrow::ToOwned;
 use alloc::sync::Arc;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use task::{Task, TaskId, TaskState, Priority};
@@ -29,11 +30,11 @@ pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
 
     for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
-        let stack = allocate_kernel_stack(32 * 1024);
+        let stack = alloc_kestack(32 * 1024);
         crate::arch::percpu::init_syscall_gs(cpu, stack);
 
-        let boot = Task::new_kernel(||loop{}, addr_of!(SPUR) as usize + 64, Priority(0), "boot");
-        let mut idle = Task::new_kernel(idle_task, stack, Priority(19), "idle");
+        let boot = Task::new_kernel(||loop{}, addr_of!(SPUR) as usize + 64, Priority(0), "boot".to_owned());
+        let mut idle = Task::new_kernel(idle_task, stack, Priority(19), "idle".to_owned());
         idle.cpu_affinity = Some(cpu);
         let mut rq = RUNQUEUES[cpu].lock();
         rq.set_current(boot.id);
@@ -44,7 +45,7 @@ pub fn init(ticks_per_10ms: u64) {
     crate::info!("Initialized with SMP Balancing");
 }
 
-pub fn allocate_kernel_stack(size: usize) -> usize {
+pub fn alloc_kestack(size: usize) -> usize {
     let pages = size.div_ceil(4096);
     let paddr = crate::mem::upa::alloc(pages);
     if paddr.to_raw() == 0 { panic!("Failed to allocate kernel stack"); }
@@ -61,14 +62,14 @@ fn idle_task() {
     }
 }
 
-pub fn spawn_kernel_task(
+pub fn spawn(
     entry: fn(),
     priority: Priority,
-    name: &'static str,
+    name: alloc::string::String,
     root: Option<RootRef>,
     cpu_affinity: Option<usize>,
 ) -> TaskId {
-    let stack = allocate_kernel_stack(32 * 1024);
+    let stack = alloc_kestack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
     
@@ -92,15 +93,15 @@ pub fn spawn_kernel_task(
     id
 }
 
-pub fn spawn_kernel_task_with_arg(
+pub fn spawn_with_arg(
     entry: fn(usize),
     arg: usize,
     priority: Priority,
-    name: &'static str,
+    name: alloc::string::String,
     root: Option<RootRef>,
     cpu_affinity: Option<usize>,
 ) -> TaskId {
-    let stack = allocate_kernel_stack(32 * 1024);
+    let stack = alloc_kestack(32 * 1024);
     let mut task = Task::new_kernel_with_arg(entry, arg, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
     
@@ -124,10 +125,10 @@ pub fn spawn_kernel_task_with_arg(
     id
 }
 
-pub fn spawn_closure_task<F>(
+pub fn spawn_closure<F>(
     closure: F,
     priority: Priority,
-    name: &'static str,
+    name: alloc::string::String,
     root: Option<RootRef>,
     cpu_affinity: Option<usize>,
 ) -> TaskId
@@ -143,7 +144,7 @@ where
         exit(0);
     }
 
-    spawn_kernel_task_with_arg(trampoline::<F>, arg, priority, name, root, cpu_affinity)
+    spawn_with_arg(trampoline::<F>, arg, priority, name, root, cpu_affinity)
 }
 
 pub static mut REAPER: TaskId = TaskId(0);
@@ -200,6 +201,10 @@ pub fn sleep(wq: &Nutex<WaitQueue>) {
     wq_guard.sleep(current_id);
     
     rq.sleep_task(current_id); 
+    
+    if let Some(task) = rq.tasks_mut().get_mut(&current_id) {
+        task.cpu_locality = 0;
+    }
 
     drop(rq);
     drop(wq_guard);
@@ -267,8 +272,8 @@ pub fn wait_any() -> Option<(TaskId, Box<Task>)> {
 
 pub fn timer_tick(frame: &mut TrapFrame) {
     if current_cpu() == 0 {
-        crate::arch::TIME_FROM_BOOT.fetch_add(10, Ordering::Relaxed);
-        let ticks = BALANCE_TICKS.fetch_add(10, Ordering::Relaxed);
+        crate::arch::TIME_FROM_BOOT.fetch_add(1, Ordering::Relaxed);
+        let ticks = BALANCE_TICKS.fetch_add(1, Ordering::Relaxed);
         if ticks % 100 == 0 { // each 100 ms
             balance_cpus();
         }
@@ -292,7 +297,7 @@ fn balance_cpus() {
         if load < min_load { min_load = load; idlest_cpu = i; }
     }
     
-    if max_load > min_load + 1024 && busiest_cpu != idlest_cpu {
+    if max_load > min_load + 2048 && busiest_cpu != idlest_cpu {
         let (mut busy_rq, mut idle_rq) = if busiest_cpu < idlest_cpu {
             (RUNQUEUES[busiest_cpu].lock(), RUNQUEUES[idlest_cpu].lock())
         } else {
@@ -300,13 +305,20 @@ fn balance_cpus() {
         };
         
         let mut stolen_id = None;
-        for (&id, task) in busy_rq.tasks().iter() {
+        let current_busy = busy_rq.current_task_id();
+        for (&id, task) in busy_rq.tasks_mut().iter_mut() {
             if task.state == TaskState::Runnable 
                && task.rt_deadline == 0 
                && (task.cpu_affinity.is_none() || task.cpu_affinity == Some(idlest_cpu)) 
-               && Some(id) != busy_rq.current_task_id() 
+               && Some(id) != current_busy
+               && (
+                (task.cpu_locality >= 16 && task.cpu_locality < 128) ||
+                (max_load > min_load + 4096 && task.cpu_locality < 128) ||
+                max_load > min_load + 8192
+               )
             {
                 stolen_id = Some(id);
+                task.cpu_locality = 0;
                 break;
             }
         }
@@ -378,6 +390,7 @@ pub fn reschedule(frame: &mut TrapFrame) {
                         );
                     }
                 }
+                new_task.cpu_locality += 1;
                 rq.set_current(next_id);
             }
         }
@@ -386,6 +399,7 @@ pub fn reschedule(frame: &mut TrapFrame) {
         if let Some(curr_id) = current_id {
             if let Some(curr_task) = rq.tasks_mut().get_mut(&curr_id) {
                 curr_task.ctx.frame = *frame;
+                curr_task.cpu_locality += 1;
             }
         }
     }
@@ -460,8 +474,8 @@ pub fn syscall_dispatcher(frame: &mut TrapFrame) {
 
 pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, is_user: bool) {
     let task_name = match RUNQUEUES[current_cpu()].lock().current_task() {
-        Some(t) => t.name,
-        None => "unknown",
+        Some(t) => t.name.to_owned(),
+        None => "unknown".to_owned(),
     };
 
     let is_present = (error_code & 0x1) != 0;

@@ -4,7 +4,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cmp::min;
 use crate::sync::Litex;
-use crate::vfs::{FileSystem, Inode, InodeId, Kind, Error};
+use crate::vfs::{FileSystem, Inode, InodeId, Kind};
+use ketypes::vfs::Error;
 
 /// Directory Entry mapping a name to an InodeId
 pub struct Dentry {
@@ -46,6 +47,10 @@ impl FileSystem for Pvfs {
             }
         }
         None
+    }
+
+    fn set_mb_id(&self, _mb_id: u32) {
+        /* nothing */
     }
 
     fn readdir(&self, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {

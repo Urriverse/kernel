@@ -41,7 +41,7 @@ impl RootReg {
         self.0.lock().get(name).copied()
     }
 
-    /// Get a copy of all mount points (for debugging).
+    /// Get a copy of all mount points.
     pub fn snapshot(&self) -> BTreeMap<String, InodeId> {
         self.0.lock().clone()
     }

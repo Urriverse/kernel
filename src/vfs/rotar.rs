@@ -3,7 +3,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use crate::sync::Litex;
-use crate::vfs::{FileSystem, Inode, InodeId, Kind, Error, Flags};
+use ketypes::vfs::*;
 
 #[repr(C)]
 struct TarHeader {
@@ -177,10 +177,6 @@ impl Rotar {
             mb_id: Litex::new(0),
         }
     }
-    
-    pub fn set_mb_id(&self, mb_id: u32) {
-        *self.mb_id.lock() = mb_id;
-    }
 }
 
 impl FileSystem for Rotar {
@@ -194,6 +190,10 @@ impl FileSystem for Rotar {
             }
         }
         None
+    }
+
+    fn set_mb_id(&self, mb_id: u32) {
+        *self.mb_id.lock() = mb_id;
     }
 
     fn readdir(&self, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {
@@ -226,7 +226,7 @@ impl FileSystem for Rotar {
         let nodes = self.nodes.lock();
         nodes.get(&inode.0).map(|n| Inode {
             id: inode, kind: n.kind, flags: Flags::from_raw(0), size: n.size,
-            uid: 0, gid: 0, atime: n.mtime, mtime: n.mtime, ctime: n.mtime, nlink: 1, private: [0; 32],
+            uid: 0, gid: 0, atime: n.mtime, mtime: n.mtime, ctime: n.mtime, nlink: 1, private: [0; 34],
         })
     }
 

@@ -1,12 +1,14 @@
 use core::sync::atomic::compiler_fence;
 
-use crate::{kmsg::{Sink, SinkAttrs, SinkIdent}, sync::Nutex};
+use crate::{kmsg::Sink, sync::Nutex};
+
+static LOCK: Nutex<()> = Nutex::new(());
 
 // cargo check: false positive
 #[allow(unused)]
-pub struct Dev;
+pub struct Devel;
 
-impl Dev
+impl Devel
 {
     // cargo check: false positive
     #[allow(unused)]
@@ -36,26 +38,8 @@ impl Dev
     }
 }
 
-unsafe impl Sync for Dev {}
-
-// cargo check: false positive
-#[allow(unused)]
-static ID: u32 = super::str4_to_u32("DEV0");
- pub static LOCK: Nutex<()> = Nutex::new(());
-
-impl Sink for Dev
-{
-    fn kind(&self) -> SinkIdent
-    {
-        SinkIdent
-        {
-            attrs: SinkAttrs::Port | SinkAttrs::Critical | SinkAttrs::Pretty,
-            kind: ID
-        }
-    }
-
-    fn write(&self, s: &str)
-    {
+impl core::fmt::Write for Devel {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let _g = LOCK.lock();
 
         for byte in s.bytes()
@@ -79,10 +63,21 @@ impl Sink for Dev
         }
 
         drop(_g);
+
+        Ok(())
+    }
+}
+
+unsafe impl Sync for Devel {}
+unsafe impl Send for Devel {}
+
+impl Sink for Devel {
+    fn format(&self) -> ketypes::mon::sink::Format {
+        ketypes::mon::sink::Format::Pretty
     }
 }
 
 lazy_static! {
-    static ref _SINK: Dev = Dev::new();
-    pub static ref SINK: &'static Dev = &_SINK;
+    static ref _SINK: Devel = Devel::new();
+    pub static ref SINK: &'static Devel = &_SINK;
 }

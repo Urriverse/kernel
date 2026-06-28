@@ -92,6 +92,7 @@ pub mod pfm;   // Page Frame Manager
 pub mod bsa;   // Buddy System Allocator
 pub mod soa;   // Slab Object Allocator
 pub mod vma;   // Virtual Memory Areas
+pub mod leak;
 
 // ============================================================================
 // GLOBAL STATE

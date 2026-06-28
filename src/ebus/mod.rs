@@ -10,17 +10,14 @@ use crate::arch;
 use crate::sched;
 use crate::sync::{Nutex, RwLock};
 use crate::sched::wq::WaitQueue;
+use alloc::borrow::ToOwned as _;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use core::hint::unlikely;
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
-// ============================================================================
-// TYPES
-// ============================================================================
-pub type EventId = u64;
-pub type EventCallback = fn(EventId, usize);
+pub use ketypes::ebus::{EventCallback, EventId};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Event {
@@ -110,7 +107,7 @@ fn dispatch_event(event: Event, affinity: Option<usize>) {
         let start_time = arch::get_time_from_boot();
         
         // The closure captures `callback`, `event`, and `start_time` by value.
-        sched::spawn_closure_task(
+        sched::spawn_closure(
             move || {
                 // Execute the subscriber callback
                 callback(event.id, event.data);
@@ -125,7 +122,7 @@ fn dispatch_event(event: Event, affinity: Option<usize>) {
                 }
             },
             sched::task::Priority(0),
-            "ebus_sub",
+            "ebus_sub".to_owned(),
             None,
             affinity, // Inherit affinity so it stays on the correct CPU if applicable
         );
@@ -193,19 +190,19 @@ pub fn init() {
             CPU_WQS[cpu].write(Nutex::new(WaitQueue::new()));
         }
         
-        sched::spawn_kernel_task(
+        sched::spawn(
             cpu_worker,
             sched::task::Priority(0),
-            "ebus_cpu_worker",
+            "ebus_cpu_worker".to_owned(),
             None,
             Some(cpu), 
         );
     }
 
-    sched::spawn_kernel_task(
+    sched::spawn(
         global_worker,
         sched::task::Priority(0),
-        "ebus_global_worker",
+        "ebus_global_worker".to_owned(),
         None,
         None,
     );

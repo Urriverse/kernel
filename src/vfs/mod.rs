@@ -1,18 +1,15 @@
 //! Virtual File System – public API and path resolution
-mod fs;
-mod inode;
 mod root;
 mod pvfs;
-mod err;
 mod rotar;
 
-pub use fs::*;
-pub use inode::*;
+use alloc::collections::btree_map::BTreeMap;
+use ketypes::sync::RwLock;
 pub use root::*;
-pub use err::*;
 pub use rotar::*;
 #[allow(unused_imports)]
 pub use pvfs::*;
+pub use ketypes::vfs::*;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -62,26 +59,33 @@ pub fn stat(mb: &MetaBlock, inode: InodeId) -> Option<Inode> {
 // PATH RESOLUTION
 // ============================================================================
 
-pub fn is_mount_point(roots: &RootReg, id: InodeId) -> bool {
+pub fn is_mount_point(id: InodeId) -> bool {
+    let roots = &*
+    crate
+    ::  sched
+    ::  current_process()
+    .   expect("No current process")
+    .   roots;
     roots.snapshot().values().any(|&v| v == id)
 }
 
-/// Resolve an absolute path from the root mount point named "root".
-/// Does not cross filesystem boundaries (mount points).
-pub fn resolve_absolute(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
-    resolve_path(roots, path, false)
-}
-
 /// Resolve an absolute path, crossing filesystem boundaries when encountering mount points.
-pub fn resolve_absolute_with_mounts(roots: &RootReg, path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
-    resolve_path(roots, path, true)
+pub fn resolve(path: &str) -> Result<(InodeId, Arc<MetaBlock>), Error> {
+    resolve_path(path, true)
 }
 
 /// Internal path resolution engine.
 ///
 /// Supports the `mount_name:/path/to/file` syntax. If no `mount_name:` prefix 
 /// is provided, it defaults to looking up the `"root"` mount point.
-fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(InodeId, Arc<MetaBlock>), Error> {
+fn resolve_path(path: &str, cross_mounts: bool) -> Result<(InodeId, Arc<MetaBlock>), Error> {
+    let roots = &*
+    crate
+    ::  sched
+    ::  current_process()
+    .   expect("No current process")
+    .   roots;
+
     // 1. Parse the "mount_name:/path" syntax
     let (mount_name, actual_path) = if let Some(pos) = path.find(':') {
         (&path[..pos], &path[pos + 1..])
@@ -128,7 +132,7 @@ fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(Inod
                     let mut next_id = child_id;
                     
                     // If we hit a mount point and are allowed to cross it, switch MetaBlock
-                    if cross_mounts && is_mount_point(roots, child_id) {
+                    if cross_mounts && is_mount_point(child_id) {
                         if let Some(mb) = get_mblock(child_id.1) {
                             next_mb = mb;
                             next_id = child_id; // The ID acts as the root of the new FS
@@ -143,6 +147,25 @@ fn resolve_path(roots: &RootReg, path: &str, cross_mounts: bool) -> Result<(Inod
 
     let (final_id, final_mb) = path_stack.last().unwrap();
     Ok((*final_id, final_mb.clone()))
+}
+
+lazy_static! {
+    static ref MBLK_REG: RwLock<(BTreeMap<u32, Arc<MetaBlock>>, u32)> =
+        RwLock::new((BTreeMap::new(), 0));
+}
+
+pub fn register_mblock(fs: Arc<dyn FileSystem>) -> u32 {
+    let mut reg = MBLK_REG.write();
+    let id = reg.1;
+    reg.1 += 1;
+    let mb = Arc::new(MetaBlock::new(id, fs.clone()));
+    reg.0.insert(id, mb);
+    fs.set_mb_id(id);
+    id
+}
+
+pub fn get_mblock(id: u32) -> Option<Arc<MetaBlock>> {
+    MBLK_REG.read().0.get(&id).cloned()
 }
 
 // ============================================================================
@@ -175,4 +198,13 @@ pub fn read_to_string(mb: &MetaBlock, file: InodeId) -> Result<String, Error> {
         }
     }
     String::from_utf8(buf).map_err(|_| Error::Unknown)
+}
+
+pub fn mount(name: String, mb: u32) -> Option<InodeId> {
+    crate
+    ::  sched
+    ::  current_process()
+    .   expect("No current process")
+    .   roots
+    .   mount(name, InodeId(0, mb))
 }

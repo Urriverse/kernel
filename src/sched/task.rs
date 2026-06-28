@@ -1,7 +1,7 @@
 // src/sched/task.rs
 use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, proc::Process}};
 use core::sync::atomic::{AtomicU64, Ordering};
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{borrow::ToOwned, boxed::Box, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(pub u64);
@@ -44,12 +44,13 @@ pub struct Task {
     pub kernel_stack: usize,
     pub user_stack: usize,
     pub cpu_affinity: Option<usize>,
-    pub name: &'static str,
+    pub name: alloc::string::String,
     pub parent: Option<TaskId>,
     pub exit_code: i32,
     pub process: Arc<Process>,
     pub kernel_stack_top: usize,
-    pub rt_deadline: u64, 
+    pub rt_deadline: u64,
+    pub cpu_locality: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -80,7 +81,7 @@ fn spur() {
     // Safely grab the task name without causing lock contention/panics
     let task_name = {
         let rq = super::rq::RUNQUEUES[current_cpu()].lock();
-        rq.current_task().map(|t| t.name).unwrap_or("unknown")
+        rq.current_task().map(|t| t.name.clone()).unwrap_or("unknown".to_owned())
     };
     __panic_msg!("Task \"{}\" didn't call `exit`", task_name);
     sched::exit(-3);
@@ -91,7 +92,7 @@ impl Task {
         entry: fn(),
         kernel_stack_top: usize,
         priority: Priority,
-        name: &'static str,
+        name: alloc::string::String,
     ) -> Box<Self> {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
@@ -122,6 +123,7 @@ impl Task {
             process: Arc::new(Process::new()),
             kernel_stack_top: kernel_stack_top,
             rt_deadline: 0,
+            cpu_locality: 0,
         })
     }
 
@@ -130,7 +132,7 @@ impl Task {
         arg: usize,
         kernel_stack_top: usize,
         priority: Priority,
-        name: &'static str,
+        name: alloc::string::String,
     ) -> Box<Self> {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
@@ -162,6 +164,7 @@ impl Task {
             process: Arc::new(Process::new()),
             kernel_stack_top: kernel_stack_top,
             rt_deadline: 0,
+            cpu_locality: 0,
         })
     }
 }
