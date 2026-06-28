@@ -228,14 +228,14 @@ impl Device {
     /// Creates a new device with the given name.
     ///
     /// The device is initially unregistered (`id` is `NULL`) and has no methods.
-    pub fn new(name: &str) -> Box<Self> {
-        Box::new(Self {
+    pub fn new(name: &str) -> Self {
+        Self {
             id: DeviceId::NULL,
             name: String::from(name),
             parent: None,
             driver_data: 0,
             methods: BTreeMap::new(),
-        })
+        }
     }
 
     /// Adds a method to the device's method table.

@@ -1,9 +1,12 @@
 pub mod mbs;
+pub mod front;
 
 // here type erasure is safe as we save contract on module's side.
 lazy_static! {
     static ref KESYMTAB: alloc::collections::BTreeMap<&'static str, usize> = auto_btm!
     {
+        "KeVtDeviceNew"             => crate::dev::Device::new              as *const () as usize,
+
         "KeDeviceAddMethod"         => crate::dev::Device::add_method       as *const () as usize,
         "KeDeviceGetMethod"         => crate::dev::Device::get_method       as *const () as usize,
         "KeDeviceRegister"          => crate::dev::register_device          as *const () as usize,

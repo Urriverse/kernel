@@ -114,6 +114,8 @@ pub mod ebus;
 /// Kernel Module Interface - kernel functions export mechanism
 pub mod kmi;
 
+pub mod obj;
+
 // ============================================================================
 // SYNCHRONIZATION BARRIERS
 // ============================================================================
