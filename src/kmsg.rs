@@ -37,7 +37,7 @@ pub fn add(sink: &'static mut dyn Sink) {
 /// (`kmsg::dev::SINK`). This function is called very early in the boot process,
 /// before any other subsystems.
 pub fn init() {
-    #[cfg(feature = "devlog")] add(*dev::SINK);
+    #[cfg(feature = "devlog")] add(dev::SINK);
 }
 
 // ============================================================================
