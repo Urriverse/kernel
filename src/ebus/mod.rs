@@ -123,7 +123,6 @@ fn dispatch_event(event: Event, affinity: Option<usize>) {
             },
             sched::task::Priority(0),
             "ebus_sub".to_owned(),
-            None,
             affinity, // Inherit affinity so it stays on the correct CPU if applicable
         );
     }
@@ -194,8 +193,8 @@ pub fn init() {
             cpu_worker,
             sched::task::Priority(0),
             "ebus_cpu_worker".to_owned(),
-            None,
             Some(cpu), 
+            false,
         );
     }
 
@@ -204,7 +203,7 @@ pub fn init() {
         sched::task::Priority(0),
         "ebus_global_worker".to_owned(),
         None,
-        None,
+        false,
     );
 
     info!("Initialized");

@@ -214,7 +214,7 @@ entry! {
                 sched::task::Priority(5),
                 "reaper".to_owned(),
                 None,
-                None
+                false,
             );
         }
 
@@ -230,12 +230,8 @@ entry! {
             init,
             sched::task::Priority(0),
             "init".to_owned(),
-            Some(
-                vfs::RootRef::new(
-                    vfs::RootReg::new()
-                )
-            ),
-            None
+            None,
+            true
         );
 
         sched::exit(0); // terminate `boot` task

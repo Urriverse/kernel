@@ -8,7 +8,6 @@ use crate::arch::trap::TrapFrame;
 use crate::mem::vma::VmaFlags;
 use crate::sched::proc::Process;
 use crate::sync::Nutex;
-use crate::vfs::RootRef;
 use alloc::borrow::ToOwned;
 use alloc::sync::Arc;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
@@ -66,18 +65,22 @@ pub fn spawn(
     entry: fn(),
     priority: Priority,
     name: alloc::string::String,
-    root: Option<RootRef>,
     cpu_affinity: Option<usize>,
+    new_pid: bool
 ) -> TaskId {
     let stack = alloc_kestack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
+
+    let proc;
     
-    if let Some(x) = root {
-        let mut proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
-        proc.roots = x;
-        task.process = Arc::new(proc);
+    if new_pid {
+        proc = Process::new();
+    } else {
+        proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
     }
+    
+    task.process = Arc::new(proc);
     
     let target_cpu = match cpu_affinity {
         Some(cpu) if cpu < crate::arch::MAX_CPUS => cpu,
@@ -98,18 +101,22 @@ pub fn spawn_with_arg(
     arg: usize,
     priority: Priority,
     name: alloc::string::String,
-    root: Option<RootRef>,
     cpu_affinity: Option<usize>,
+    new_pid: bool
 ) -> TaskId {
     let stack = alloc_kestack(32 * 1024);
     let mut task = Task::new_kernel_with_arg(entry, arg, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
     
-    if let Some(x) = root {
-        let mut proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
-        proc.roots = x;
-        task.process = Arc::new(proc);
+    let proc;
+    
+    if new_pid {
+        proc = Process::new();
+    } else {
+        proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
     }
+
+    task.process = Arc::new(proc);
     
     let target_cpu = match cpu_affinity {
         Some(cpu) if cpu < crate::arch::MAX_CPUS => cpu,
@@ -129,7 +136,6 @@ pub fn spawn_closure<F>(
     closure: F,
     priority: Priority,
     name: alloc::string::String,
-    root: Option<RootRef>,
     cpu_affinity: Option<usize>,
 ) -> TaskId
 where
@@ -144,7 +150,7 @@ where
         exit(0);
     }
 
-    spawn_with_arg(trampoline::<F>, arg, priority, name, root, cpu_affinity)
+    spawn_with_arg(trampoline::<F>, arg, priority, name, cpu_affinity, false)
 }
 
 pub static mut REAPER: TaskId = TaskId(0);
