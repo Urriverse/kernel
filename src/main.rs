@@ -76,6 +76,10 @@ pub extern crate lazy_static;
 #[macro_use]
 pub extern crate alloc;
 
+#[allow(unused)] // cargo check false positive
+#[macro_use]
+pub extern crate ketypes;
+
 // ============================================================================
 // INTERNAL MODULES
 // ============================================================================
