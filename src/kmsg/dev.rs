@@ -12,7 +12,7 @@ impl Devel
 {
     // cargo check: false positive
     #[allow(unused)]
-    pub fn new() -> Self
+    pub fn init()
     {
         unsafe
         {
@@ -34,7 +34,6 @@ impl Devel
             let _ = x86::io::inb(0x3f8 + 5);
             compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
-        Self
     }
 }
 
@@ -77,7 +76,12 @@ impl Sink for Devel {
     }
 }
 
+static mut _SINK: Devel = Devel;
+
 lazy_static! {
-    static ref _SINK: Devel = Devel::new();
-    pub static ref SINK: &'static Devel = &_SINK;
+    pub static ref SINK: &'static mut Devel = {
+        Devel::init();
+        #[allow(static_mut_refs)]
+        unsafe { &mut _SINK }
+    };
 }
