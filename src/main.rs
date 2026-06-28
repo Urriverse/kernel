@@ -272,7 +272,7 @@ fn init() {
     let initramfs = Arc::new(vfs::Rotar::new(initramfs_data));
     
     // 3. Register it in the global VFS registry
-    let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::FileSystem>);
+    let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::KeFileSystem>);
     
     // 4. Create a RootReg and mount it under the custom name "irfs"
     vfs::mount("initramfs".to_string(), mb_id);

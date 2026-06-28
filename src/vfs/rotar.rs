@@ -179,14 +179,14 @@ impl Rotar {
     }
 }
 
-impl FileSystem for Rotar {
-    fn lookup(&self, dir: InodeId, name: &str) -> Option<InodeId> {
+impl KeFileSystem for Rotar {
+    fn lookup(&self, dir: KeInodeId, name: &str) -> Option<KeInodeId> {
         let mb_id = *self.mb_id.lock();
         if dir.1 != mb_id { return None; }
         let dirs = self.dirs.lock();
         if let Some(children) = dirs.get(&dir.0) {
             for (child_name, child_ino) in children {
-                if child_name == name { return Some(InodeId(*child_ino, mb_id)); }
+                if child_name == name { return Some(KeInodeId(*child_ino, mb_id)); }
             }
         }
         None
@@ -196,43 +196,43 @@ impl FileSystem for Rotar {
         *self.mb_id.lock() = mb_id;
     }
 
-    fn readdir(&self, dir: InodeId, offset: usize) -> Option<(String, InodeId)> {
+    fn readdir(&self, dir: KeInodeId, offset: usize) -> Option<(String, KeInodeId)> {
         let mb_id = *self.mb_id.lock();
         if dir.1 != mb_id { return None; }
         let dirs = self.dirs.lock();
         if let Some(children) = dirs.get(&dir.0) {
-            children.get(offset).map(|(name, ino)| (name.clone(), InodeId(*ino, mb_id)))
+            children.get(offset).map(|(name, ino)| (name.clone(), KeInodeId(*ino, mb_id)))
         } else { None }
     }
 
-    fn read(&self, file: InodeId, offset: usize, buf: &mut [u8]) -> Result<usize, Error> {
+    fn read(&self, file: KeInodeId, offset: usize, buf: &mut [u8]) -> Result<usize, KeFsError> {
         let mb_id = *self.mb_id.lock();
-        if file.1 != mb_id { return Err(Error::NoEntry); }
+        if file.1 != mb_id { return Err(KeFsError::NoEntry); }
         let nodes = self.nodes.lock();
         if let Some(node) = nodes.get(&file.0) {
-            if node.kind != Kind::File { return Err(Error::NotAFile); }
+            if node.kind != Kind::File { return Err(KeFsError::NotAFile); }
             if offset >= node.data_len { return Ok(0); }
             let available = node.data_len - offset;
             let to_read = core::cmp::min(available, buf.len());
             let start = node.data_offset + offset;
             buf[..to_read].copy_from_slice(&self.data[start..start+to_read]);
             Ok(to_read)
-        } else { Err(Error::NoEntry) }
+        } else { Err(KeFsError::NoEntry) }
     }
 
-    fn stat(&self, inode: InodeId) -> Option<Inode> {
+    fn stat(&self, inode: KeInodeId) -> Option<KeInode> {
         let mb_id = *self.mb_id.lock();
         if inode.1 != mb_id { return None; }
         let nodes = self.nodes.lock();
-        nodes.get(&inode.0).map(|n| Inode {
-            id: inode, kind: n.kind, flags: Flags::from_raw(0), size: n.size,
+        nodes.get(&inode.0).map(|n| KeInode {
+            id: inode, kind: n.kind, flags: KeInodeFlags::from_raw(0), size: n.size,
             uid: 0, gid: 0, atime: n.mtime, mtime: n.mtime, ctime: n.mtime, nlink: 1, private: [0; 34],
         })
     }
 
-    fn write(&self, _file: InodeId, _offset: usize, _buf: &[u8]) -> Result<usize, Error> { Err(Error::Unknown) }
-    fn truncate(&self, _file: InodeId, _new_size: usize) -> Result<(), Error> { Err(Error::Unknown) }
-    fn unlink(&self, _dir: InodeId, _name: &str) -> Result<(), Error> { Err(Error::Unknown) }
-    fn link(&self, _parent: InodeId, _name: &str, _child: InodeId) -> Result<(), Error> { Err(Error::Unknown) }
-    fn new(&self, _mb_id: u32, _inode: Inode, _kind: Kind) -> Result<InodeId, Error> { Err(Error::Unknown) }
+    fn write(&self, _file: KeInodeId, _offset: usize, _buf: &[u8]) -> Result<usize, KeFsError> { Err(KeFsError::Unknown) }
+    fn truncate(&self, _file: KeInodeId, _new_size: usize) -> Result<(), KeFsError> { Err(KeFsError::Unknown) }
+    fn unlink(&self, _dir: KeInodeId, _name: &str) -> Result<(), KeFsError> { Err(KeFsError::Unknown) }
+    fn link(&self, _parent: KeInodeId, _name: &str, _child: KeInodeId) -> Result<(), KeFsError> { Err(KeFsError::Unknown) }
+    fn new(&self, _mb_id: u32, _inode: KeInode, _kind: Kind) -> Result<KeInodeId, KeFsError> { Err(KeFsError::Unknown) }
 }

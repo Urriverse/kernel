@@ -1,4 +1,4 @@
-pub use ketypes::mon::{lvl::AttLvl, sink::{Sink, Format}};
+pub use ketypes::mon::{KeAttLvl, KeSink, KeFormat};
 use core::fmt::Write;
 
 use crate::sync::Litex;
@@ -19,15 +19,15 @@ type Msg = String<MAX_MSG_LEN>;
 
 /// Global registry of log sinks.
 ///
-/// This is a `Litex<Vec<&'static dyn Sink, 256>>` – a spinlock that disables
+/// This is a `Litex<Vec<&'static dyn KeSink, 256>>` – a spinlock that disables
 /// interrupts during the critical section. Up to 256 sinks can be registered.
-pub static SINKS: Litex<Vec<&'static mut dyn Sink, 256>> = Litex::new(Vec::new());
+pub static SINKS: Litex<Vec<&'static mut dyn KeSink, 256>> = Litex::new(Vec::new());
 
 /// Adds a sink to the global registry.
 ///
 /// The sink must be `'static` (i.e., either a `static` variable or a leaked
 /// reference). This function acquires the lock and pushes the sink.
-pub fn add(sink: &'static mut dyn Sink) {
+pub fn add(sink: &'static mut dyn KeSink) {
     let _ = SINKS.lock().push(sink);
 }
 
@@ -70,7 +70,7 @@ pub fn init() {
 /// - This function acquires the `SINKS` lock, so it must not be called from
 ///   interrupt handlers or panic contexts (use `str_log_noblock` for that).
 #[allow(unused)]
-pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>) {
+pub fn log(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>) {
     #[cfg(feature = "lowlog")] let _ = file;
     #[cfg(feature = "lowlog")] let _ = line;
 
@@ -87,11 +87,11 @@ pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa:
 
         // Choose level representation based on sink's Pretty flag
         let lvl = match sink.format() {
-            Format::Pretty => al.pretty(),
-            Format::Regular => al.as_str(),
+            KeFormat::Pretty => al.pretty(),
+            KeFormat::Regular => al.as_str(),
         };
 
-        // Format the full message
+        // KeFormat the full message
         #[cfg(    feature = "lowlog" )]
         let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, lvl, c.as_str()));
         #[cfg(not(feature = "lowlog"))]
@@ -106,7 +106,7 @@ pub fn log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, fa:
 /// This is a faster path for `...!(str "...")` macro invocations.
 /// It avoids the `format_args!` machinery and builds the message directly.
 #[allow(unused)]
-pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str) {
+pub fn str_log(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str) {
     #[cfg(feature = "lowlog")] let _ = file;
     #[cfg(feature = "lowlog")] let _ = line;
 
@@ -116,8 +116,8 @@ pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32,
         let mut m = Msg::new();
 
         let lvl = match sink.format() {
-            Format::Pretty => al.pretty(),
-            Format::Regular => al.as_str(),
+            KeFormat::Pretty => al.pretty(),
+            KeFormat::Regular => al.as_str(),
         };
 
         #[cfg(    feature = "lowlog" )]
@@ -141,7 +141,7 @@ pub fn str_log(al: AttLvl, modpath: &'static str, file: &'static str, line: u32,
 /// - Must not be called after the system has started multi‑core scheduling
 ///   (unless interrupts are disabled and no other CPU can access the registry).
 #[allow(unused)]
-pub unsafe fn str_log_noblock(al: AttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str) {
+pub unsafe fn str_log_noblock(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, s: &str) {
     #[cfg(feature = "lowlog")] let _ = file;
     #[cfg(feature = "lowlog")] let _ = line;
 
@@ -151,8 +151,8 @@ pub unsafe fn str_log_noblock(al: AttLvl, modpath: &'static str, file: &'static 
         let mut m = Msg::new();
 
         let lvl = match sink.format() {
-            Format::Pretty => al.pretty(),
-            Format::Regular => al.as_str(),
+            KeFormat::Pretty => al.pretty(),
+            KeFormat::Regular => al.as_str(),
         };
 
         #[cfg(    feature = "lowlog" )]

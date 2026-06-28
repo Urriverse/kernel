@@ -17,7 +17,7 @@ use core::hint::unlikely;
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
-pub use ketypes::ebus::{EventCallback, EventId};
+pub use ketypes::ebus::{KeEventCallback as EventCallback, KeEventId as EventId};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Event {

@@ -4,8 +4,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cmp::min;
 use crate::sync::Litex;
-use crate::vfs::{FileSystem, Inode, InodeId, Kind};
-use ketypes::vfs::Error;
+use crate::vfs::{KeFileSystem as FileSystem, KeInode as Inode, KeInodeId as InodeId, Kind};
+use ketypes::vfs::KeFsError as Error;
 
 /// Directory Entry mapping a name to an InodeId
 pub struct Dentry {

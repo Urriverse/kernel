@@ -1,6 +1,6 @@
 use core::sync::atomic::compiler_fence;
 
-use crate::{kmsg::Sink, sync::Nutex};
+use crate::{kmsg::KeSink, sync::Nutex};
 
 static LOCK: Nutex<()> = Nutex::new(());
 
@@ -70,8 +70,8 @@ impl core::fmt::Write for Devel {
 unsafe impl Sync for Devel {}
 unsafe impl Send for Devel {}
 
-impl Sink for Devel {
-    fn format(&self) -> ketypes::mon::sink::Format {
-        ketypes::mon::sink::Format::Pretty
+impl KeSink for Devel {
+    fn format(&self) -> ketypes::mon::sink::KeFormat {
+        ketypes::mon::sink::KeFormat::Pretty
     }
 }

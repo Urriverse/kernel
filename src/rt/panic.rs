@@ -15,7 +15,7 @@ fn print_stack_trace() {
     let mut count = 0;
 
     unsafe { kmsg::str_log_noblock(
-        kmsg::AttLvl::Error,
+        kmsg::KeAttLvl::Error,
         "",
         file!(),
         line!(),
@@ -23,7 +23,7 @@ fn print_stack_trace() {
     ) };
 
     unsafe { kmsg::str_log_noblock(
-        kmsg::AttLvl::Error,
+        kmsg::KeAttLvl::Error,
         "",
         file!(),
         line!(),
@@ -36,7 +36,7 @@ fn print_stack_trace() {
         let mut msg = heapless::String::<32>::new();
         let _ = msg.write_fmt(format_args!("  #{:02} 0x{:016X}", count, ret_addr));
         unsafe { kmsg::str_log_noblock(
-            kmsg::AttLvl::Error,
+            kmsg::KeAttLvl::Error,
             "",
             file!(),
             line!(),
@@ -48,7 +48,7 @@ fn print_stack_trace() {
     }
 
     unsafe { kmsg::str_log_noblock(
-        kmsg::AttLvl::Error,
+        kmsg::KeAttLvl::Error,
         "",
         file!(),
         line!(),
@@ -73,7 +73,7 @@ pub fn panic(info: &core::panic::PanicInfo) -> ! {
     let _ = s.write_fmt(format_args!("{}", info.message()));
 
     unsafe { kmsg::str_log_noblock(
-        kmsg::AttLvl::Panic,
+        kmsg::KeAttLvl::Panic,
         "",
         file,
         line,

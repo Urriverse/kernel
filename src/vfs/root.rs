@@ -4,7 +4,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use crate::sync::Litex;
-use crate::vfs::InodeId;
+use crate::vfs::KeInodeId as InodeId;
 
 /// Mount point registry for a process.
 #[derive(Debug)]
