@@ -75,13 +75,3 @@ impl Sink for Devel {
         ketypes::mon::sink::Format::Pretty
     }
 }
-
-static mut _SINK: Devel = Devel;
-
-lazy_static! {
-    pub static ref SINK: &'static mut Devel = {
-        Devel::init();
-        #[allow(static_mut_refs)]
-        unsafe { &mut _SINK }
-    };
-}

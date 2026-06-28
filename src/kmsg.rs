@@ -1,5 +1,5 @@
 pub use ketypes::mon::{lvl::AttLvl, sink::{Sink, Format}};
-use core::fmt::Write;
+use core::{fmt::Write, ops::Deref};
 
 use crate::sync::Litex;
 use heapless::{Vec, String};
@@ -31,13 +31,20 @@ pub fn add(sink: &'static mut dyn Sink) {
     let _ = SINKS.lock().push(sink);
 }
 
+#[cfg(feature = "devlog")]
+static mut DEV: dev::Devel = dev::Devel;
+
 /// Initializes the logging system.
 ///
 /// If the `devlog` feature is enabled, this registers the serial sink
 /// (`kmsg::dev::SINK`). This function is called very early in the boot process,
 /// before any other subsystems.
 pub fn init() {
-    #[cfg(feature = "devlog")] add(dev::SINK);
+    #[cfg(feature = "devlog")]
+    {
+        #[allow(static_mut_refs)]
+        add(unsafe { &mut DEV });
+    }
 }
 
 // ============================================================================
