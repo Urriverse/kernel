@@ -2,7 +2,7 @@
 
 use ketypes::*;
 
-pub fn KeVtDeviceNew(name: KeStr) -> KeDevice {
+pub fn KeVtDeviceNew(name: KeStr) -> Hdl![Device] {
     trace!("KeVtDeviceNew name={:?}", name);
-    KeDevice::new(crate::dev::Device::new(name))
+    <hdl![Device]>::new(crate::dev::Device::new(name))
 }
