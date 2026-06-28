@@ -136,9 +136,9 @@ impl<T> Nitex<T> {
     /// This is unsafe because it bypasses the mutex. The caller must ensure
     /// that no other code is accessing the data concurrently.
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn inner(&self) -> &mut T {
+    pub unsafe fn inner(&self) -> &'static mut T {
         unsafe {
-            self.data.as_mut_unchecked()
+            self.data.get().as_mut_unchecked()
         }
     }
 

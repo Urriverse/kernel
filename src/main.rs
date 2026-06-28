@@ -215,7 +215,7 @@ entry! {
                 "reaper".to_owned(),
                 None,
                 false,
-            );
+            ).run();
         }
 
         unsafe { core::arch::asm! { "sti" } }
@@ -232,7 +232,7 @@ entry! {
             "init".to_owned(),
             None,
             true
-        );
+        ).run();
 
         sched::exit(0); // terminate `boot` task
     }

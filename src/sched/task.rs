@@ -1,7 +1,7 @@
 // src/sched/task.rs
 use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, proc::Process}};
 use core::sync::atomic::{AtomicU64, Ordering};
-use alloc::{borrow::ToOwned, boxed::Box, sync::Arc};
+use alloc::{borrow::ToOwned, boxed::Box, string::{String, ToString}, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(pub u64);
@@ -51,6 +51,7 @@ pub struct Task {
     pub kernel_stack_top: usize,
     pub rt_deadline: u64,
     pub cpu_locality: u64,
+    pub current_root: Box<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,6 +125,7 @@ impl Task {
             kernel_stack_top: kernel_stack_top,
             rt_deadline: 0,
             cpu_locality: 0,
+            current_root: Box::new("initramfs".to_string()),
         })
     }
 
@@ -165,6 +167,7 @@ impl Task {
             kernel_stack_top: kernel_stack_top,
             rt_deadline: 0,
             cpu_locality: 0,
+            current_root: Box::new("initramfs".to_string()),
         })
     }
 }

@@ -40,6 +40,7 @@ lazy_static! {
         "KeFsReadToString"          =>  crate::vfs::read_to_string          as *const () as usize,
         "KeFsMetaBlockRegister"     =>  crate::vfs::register_mblock         as *const () as usize,
         "KeFsMount"                 =>  crate::vfs::mount                   as *const () as usize,
+        "KeFsCurrentRoot"           => crate::sched::current_root           as *const () as usize,
 
         "KeMemAlloc"                =>  crate::mem::soa::alloc              as *const () as usize,
         "KeMemFree"                 =>  crate::mem::soa::free               as *const () as usize,

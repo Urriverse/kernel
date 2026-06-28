@@ -9,6 +9,7 @@ use crate::mem::vma::VmaFlags;
 use crate::sched::proc::Process;
 use crate::sync::Nutex;
 use alloc::borrow::ToOwned;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use task::{Task, TaskId, TaskState, Priority};
@@ -61,13 +62,34 @@ fn idle_task() {
     }
 }
 
+pub struct Spawn {
+    pub task: Box<Task>,
+}
+
+impl Spawn {
+    pub fn run(mut self) -> TaskId {
+        let target_cpu = match self.task.cpu_affinity {
+            Some(cpu) if cpu < crate::arch::MAX_CPUS => cpu,
+            _ => current_cpu(),
+        };
+
+        let rq = RUNQUEUES[target_cpu].lock();
+        self.task.parent = rq.current_task_id();
+        drop(rq);
+    
+        let id = self.task.id;
+        RUNQUEUES[target_cpu].lock().spawn_task(self.task);
+        id
+    }
+}
+
 pub fn spawn(
     entry: fn(),
     priority: Priority,
     name: alloc::string::String,
     cpu_affinity: Option<usize>,
     new_pid: bool
-) -> TaskId {
+) -> Spawn {
     let stack = alloc_kestack(32 * 1024);
     let mut task = Task::new_kernel(entry, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
@@ -82,18 +104,7 @@ pub fn spawn(
     
     task.process = Arc::new(proc);
     
-    let target_cpu = match cpu_affinity {
-        Some(cpu) if cpu < crate::arch::MAX_CPUS => cpu,
-        _ => current_cpu(),
-    };
-    
-    let rq = RUNQUEUES[target_cpu].lock();
-    task.parent = rq.current_task_id();
-    drop(rq);
-    
-    let id = task.id;
-    RUNQUEUES[target_cpu].lock().spawn_task(task);
-    id
+    Spawn { task }
 }
 
 pub fn spawn_with_arg(
@@ -193,24 +204,26 @@ pub fn yield_now() {
     }
 }
 
-pub fn sleep(wq: &Nutex<WaitQueue>) {
-    let cpu = current_cpu();
+pub fn current_root() -> String {
+    let mut rq = RUNQUEUES[current_cpu()].lock();
     
-    let current_id = {
-        let rq = RUNQUEUES[cpu].lock();
-        rq.current_task_id().unwrap()
-    };
+    let current_id = unsafe { rq.current_task_id().unwrap_unchecked() };
+    
+    (*unsafe { rq.tasks_mut().get_mut(&current_id).unwrap_unchecked() }.current_root).clone()
+}
+
+pub fn sleep(wq: &Nutex<WaitQueue>) {
+    let mut rq = RUNQUEUES[current_cpu()].lock();
+    
+    let current_id = unsafe { rq.current_task_id().unwrap_unchecked() };
 
     let mut wq_guard = wq.lock();
-    let mut rq = RUNQUEUES[cpu].lock();
 
     wq_guard.sleep(current_id);
     
     rq.sleep_task(current_id); 
     
-    if let Some(task) = rq.tasks_mut().get_mut(&current_id) {
-        task.cpu_locality = 0;
-    }
+    unsafe { rq.tasks_mut().get_mut(&current_id).unwrap_unchecked() }.cpu_locality = 0;
 
     drop(rq);
     drop(wq_guard);
