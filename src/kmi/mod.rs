@@ -66,12 +66,15 @@ pub fn init(elf: &[u8]) {
     // parse and load module
     let module = mbs::Module::load(elf).expect("Unable to start bootstrap module");
 
+    trace!("Module loaded");
+
     let (symtab, strtab) = module.symbols().expect("No symtab");
 
     // link it to the kernel
     for sym in symtab {
         if let Ok(name) = strtab.get(sym.st_name as usize) {
             if KESYMTAB.contains_key(&name) {
+                trace!("Linked {}", name);
                 *unsafe { module.dive(&sym) } = KESYMTAB[&name];
             }
         }
@@ -79,4 +82,5 @@ pub fn init(elf: &[u8]) {
 
     // run module
     let _ = module.run();
+    trace!("module started");
 }

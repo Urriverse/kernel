@@ -1,5 +1,5 @@
 pub use ketypes::mon::{lvl::AttLvl, sink::{Sink, Format}};
-use core::{fmt::Write, ops::Deref};
+use core::fmt::Write;
 
 use crate::sync::Litex;
 use heapless::{Vec, String};
