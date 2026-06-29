@@ -364,6 +364,7 @@ fn balance_cpus() {
 }
 
 pub fn reschedule(frame: &mut TrapFrame) {
+    trace!("Tick!");
     crate::arch::acpi::eoi();
     let cpu = current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
