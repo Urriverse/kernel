@@ -14,6 +14,7 @@ pub struct Module<'a> {
     pub offset  : usize,
     pub entry   : fn(),
     pub name    : &'a str,
+    pub size    : usize,
 }
 
 impl<'a> Module<'a> {
@@ -23,8 +24,9 @@ impl<'a> Module<'a> {
         elf: elf::ElfBytes<'a, elf::endian::NativeEndian>,
         offset: usize,
         entry: fn(),
-        name: &'a str
-    ) -> Self { Self { bytes, elf, offset, entry, name } }
+        name: &'a str,
+        size: usize,
+    ) -> Self { Self { bytes, elf, offset, entry, name, size } }
 
     pub fn load(elf: &'a [u8]) -> Result<Self, alloc::string::String> {
         let bytes
@@ -168,7 +170,7 @@ impl<'a> Module<'a> {
         
         let entry_fn: fn() = unsafe { core::mem::transmute(entry_vaddr) };
 
-        Ok(Self::new(elf, bytes, hhdm_base, entry_fn, modname))
+        Ok(Self::new(elf, bytes, hhdm_base, entry_fn, modname, max_vaddr - min_vaddr))
     }
 
     pub fn symbols(&self) -> Result<(elf::parse::ParsingIterator<'_, elf::endian::LittleEndian, elf::symbol::Symbol>, elf::string_table::StringTable<'_>), alloc::string::String> {
