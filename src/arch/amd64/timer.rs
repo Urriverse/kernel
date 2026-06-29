@@ -226,7 +226,7 @@ pub fn calibrate() {
     let period_fs = cap >> 32;
     if period_fs == 0 { panic!("HPET period is 0"); }
 
-    let target_fs = 1_000_000_000_000u64;
+    let target_fs = 5_000_000_000_000u64;
     let hpet_ticks_to_wait = target_fs / period_fs;
 
     inst.disable();
@@ -252,8 +252,8 @@ pub fn calibrate() {
 
     // Store globally for all CPUs to use
     CALIBRATED_TICKS.store(elapsed as u64, Ordering::Release);
-    TICKS_PER_10MS.store(elapsed as u64 / 100, Ordering::Release); // Ticks per 10ms
-    info!("APIC timer calibrated: {} ticks per 10ms", elapsed as u64 / 100);
+    TICKS_PER_10MS.store(elapsed as u64 / 100 / 2, Ordering::Release); // Ticks per 10ms
+    info!("APIC timer calibrated: {} ticks per 5ms", elapsed as u64 / 100 / 2);
 }
 
 static TIMER_SEQ: Mutex<()> = Mutex::new(());
