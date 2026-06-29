@@ -1,5 +1,11 @@
+use nopaque::*;
+
 pub mod mbs;
 pub mod front;
+
+pub fn kvdn(name: &'static str) -> Arc![@Device] {
+    <arc![@Device]>::new(crate::dev::Device::new(name))
+}
 
 // here type erasure is safe as we save contract on module's side.
 lazy_static! {
@@ -7,7 +13,7 @@ lazy_static! {
     {
         "KeTest"                    => front::KeTest                        as *const () as usize,
 
-        "KeVtDeviceNew"             => crate::dev::Device::new              as *const () as usize,
+        "KeVtDeviceNew"             => kvdn       as *const () as usize,
 
         "KeDeviceAddMethod"         => crate::dev::Device::add_method       as *const () as usize,
         "KeDeviceGetMethod"         => crate::dev::Device::get_method       as *const () as usize,
