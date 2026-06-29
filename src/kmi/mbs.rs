@@ -187,8 +187,7 @@ impl<'a> Module<'a> {
     }
 
     pub unsafe fn dive<T>(&self, sym: &elf::symbol::Symbol) -> &mut T {
-        if let Some(va) = self.offset.checked_add(sym.st_value as usize)
-        && va < self.offset && va > self.offset + self.bytes.len() {
+        if let Some(va) = self.offset.checked_add(sym.st_value as usize) {
             return Vaddr::from_raw(va).to_ref_mut()
         } else {
             error!("Symbol {} could not be resolved :: {:p}", self.symbols().unwrap().1.get(sym.st_name as usize).unwrap(), sym.st_value as *const ());
