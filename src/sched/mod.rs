@@ -557,8 +557,8 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, is_user: bool) 
         }
     }
 
-    crate::info!("Process {} SEGFAULT at {:#X} (RIP: {:#X}, code: {:#X}, task: {})", proc.pid, addr, rip, error_code, task_name);
-    exit(139);
+    panic!("Process {} SEGFAULT at {:#X} (RIP: {:#X}, code: {:#X}, task: {})", proc.pid, addr, rip, error_code, task_name);
+    // exit(139);
 }
 
 pub fn set_rt_deadline(task_id: TaskId, deadline_ms: u64) {
