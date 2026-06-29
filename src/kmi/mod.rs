@@ -90,13 +90,13 @@ pub fn init(elf: &[u8]) {
             trace!("Found symbol `{}`", name);
             if KESYMTAB.contains_key(&name) {
                 trace!("Linking `{}` -> {:p}...", name, KESYMTAB[&name] as *const ());
-                if let Some(r) = unsafe { module.dive(&sym) } {
+                if let Some(r) = module.dive(&sym) {
                     *r = KESYMTAB[&name];
                 } else {
                     error!("Failed to resolve address of symbol `{}`", name);
                 }
                 trace!("Linked {}", name);
-            } else if name.starts_with("Ke") {
+            } else if name.len() > 2 && name.starts_with("Ke") {
                 warn!("Symbol `{}` looks like Kexport, but unknown for kernel", name);
             }
         }

@@ -188,7 +188,7 @@ impl<'a> Module<'a> {
         Vaddr::from_raw(va)
     }
 
-    pub unsafe fn dive<T>(&self, sym: &elf::symbol::Symbol) -> Option<&mut T> {
+    pub fn dive<T>(&self, sym: &elf::symbol::Symbol) -> Option<&mut T> {
         if let Some(va) = self.offset.checked_add(sym.st_value as usize) {
             return Some(Vaddr::from_raw(va).to_ref_mut())
         } 
