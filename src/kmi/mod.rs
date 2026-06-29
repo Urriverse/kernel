@@ -65,7 +65,7 @@ lazy_static! {
         // "KeModulePointer"           =>  mbs::safe::sym_get_ptr              as *const () as usize,
         // "KeModuleExecute"           =>  mbs::safe::run_module               as *const () as usize,
 
-        // "KeMonLog"                  =>  crate::kmsg::log                    as *const () as usize,
+        "KeMonLog"                  =>  crate::kmsg::log                    as *const () as usize,
         // "KeMonAddSink"              =>  crate::kmsg::add                    as *const () as usize,
 
         // "KePagingPap"               => crate::mem::ptm::cur_try_map         as *const () as usize,
