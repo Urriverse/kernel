@@ -13,7 +13,7 @@ lazy_static! {
     {
         // "KeTest"                    => front::KeTest                        as *const () as usize,
 
-        // "KeVtDeviceNew"             => kvdn       as *const () as usize,
+        "KeVtDeviceNew"             => kvdn       as *const () as usize,
 
         // "KeDeviceAddMethod"         => crate::dev::Device::add_method       as *const () as usize,
         // "KeDeviceGetMethod"         => crate::dev::Device::get_method       as *const () as usize,
