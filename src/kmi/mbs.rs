@@ -201,7 +201,7 @@ impl<'a> Module<'a> {
         let stack_top = crate::sched::alloc_kestack(32 << 10);
         
         let mut task = crate::sched::task::Task::new_kernel(
-            self.entry.clone(),
+            self.entry,
             stack_top,
             crate::sched::task::Priority(0),
             self.name.to_string(),

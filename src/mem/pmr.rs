@@ -196,7 +196,7 @@ impl Iter {
     /// Advances the iterator and returns the next region, if any.
     ///
     /// This method is used internally by the `Iterator` trait implementation.
-    pub fn next(&mut self) -> Option<Region> {
+    pub fn next_reg(&mut self) -> Option<Region> {
         if self.next < MMAP.len() {
             let e = MMAP[self.next];
             self.next += 1;
@@ -217,6 +217,6 @@ impl Iterator for Iter {
 
     /// Returns the next region.
     fn next(&mut self) -> Option<Self::Item> {
-        Iter::next(self)
+        Iter::next_reg(self)
     }
 }

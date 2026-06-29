@@ -33,7 +33,7 @@ pub fn init(ticks_per_10ms: u64) {
         let stack = alloc_kestack(32 * 1024);
         crate::arch::percpu::init_syscall_gs(cpu, stack);
 
-        let boot = Task::new_kernel(||loop{}, addr_of!(SPUR) as usize + 64, Priority(0), "boot".to_owned());
+        let boot = Task::new_kernel(||loop{core::hint::spin_loop()}, addr_of!(SPUR) as usize + 64, Priority(0), "boot".to_owned());
         let mut idle = Task::new_kernel(idle_task, stack, Priority(19), "idle".to_owned());
         idle.cpu_affinity = Some(cpu);
         let mut rq = RUNQUEUES[cpu].lock();
@@ -94,13 +94,11 @@ pub fn spawn(
     let mut task = Task::new_kernel(entry, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
 
-    let proc;
-    
-    if new_pid {
-        proc = Process::new();
+    let proc = if new_pid {
+        Process::new()
     } else {
-        proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
-    }
+        current_process().map(|p| (*p).clone()).unwrap_or_default()
+    };
     
     task.process = Arc::new(proc);
     
@@ -119,13 +117,11 @@ pub fn spawn_with_arg(
     let mut task = Task::new_kernel_with_arg(entry, arg, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
     
-    let proc;
-    
-    if new_pid {
-        proc = Process::new();
+    let proc = if new_pid {
+        Process::new()
     } else {
-        proc = current_process().map(|p| (*p).clone()).unwrap_or_else(Process::new);
-    }
+        current_process().map(|p| (*p).clone()).unwrap_or_default()
+    };
 
     task.process = Arc::new(proc);
     
@@ -239,8 +235,8 @@ pub fn wakeup(wq: &Nutex<WaitQueue>) {
     
     if let Some(task_id) = task_id {
         let mut found = false;
-        for cpu in 0..crate::arch::num_cpus() {
-            let mut rq = RUNQUEUES[cpu].lock();
+        for rq in RUNQUEUES.iter().take(crate::arch::num_cpus()){
+            let mut rq = rq.lock();
             if rq.tasks().contains_key(&task_id) {
                 rq.wakeup_task(task_id);
                 found = true;
@@ -293,7 +289,7 @@ pub fn timer_tick(frame: &mut TrapFrame) {
     if current_cpu() == 0 {
         crate::arch::TIME_FROM_BOOT.fetch_add(1, Ordering::Relaxed);
         let ticks = BALANCE_TICKS.fetch_add(1, Ordering::Relaxed);
-        if ticks % 100 == 0 { // each 100 ms
+        if ticks.is_multiple_of(100) { // each 100 ms
             balance_cpus();
         }
     }
@@ -309,8 +305,8 @@ fn balance_cpus() {
     let mut idlest_cpu = 0;
     let mut min_load = u64::MAX;
     
-    for i in 0..num_cpus {
-        let rq = RUNQUEUES[i].lock();
+    for (i, rq) in RUNQUEUES.iter().enumerate().take(num_cpus) {
+        let rq = rq.lock();
         let load = rq.load();
         if load > max_load { max_load = load; busiest_cpu = i; }
         if load < min_load { min_load = load; idlest_cpu = i; }
@@ -342,22 +338,21 @@ fn balance_cpus() {
             }
         }
         
-        if let Some(id) = stolen_id {
-            if let Some(mut task) = busy_rq.remove(id) {
-                let busy_min = busy_rq.min_vruntime();
-                let idle_min = idle_rq.min_vruntime();
-                
-                let relative_vruntime = task.vruntime.saturating_sub(busy_min);
-                task.vruntime = idle_min.saturating_add(relative_vruntime);
-                task.deadline = task.vruntime + task.slice;
-                
-                idle_rq.insert(task);
-                drop(busy_rq);
-                drop(idle_rq);
-                
-                if idlest_cpu as u32 != current_cpu() as u32 {
-                    crate::arch::acpi::send_fixed_ipi(idlest_cpu as u32, crate::arch::idt::IPI_VECTOR);
-                }
+        if let Some(id) = stolen_id
+        && let Some(mut task) = busy_rq.remove(id) {
+            let busy_min = busy_rq.min_vruntime();
+            let idle_min = idle_rq.min_vruntime();
+            
+            let relative_vruntime = task.vruntime.saturating_sub(busy_min);
+            task.vruntime = idle_min.saturating_add(relative_vruntime);
+            task.deadline = task.vruntime + task.slice;
+            
+            idle_rq.insert(task);
+            drop(busy_rq);
+            drop(idle_rq);
+            
+            if idlest_cpu as u32 != current_cpu() as u32 {
+                crate::arch::acpi::send_fixed_ipi(idlest_cpu as u32, crate::arch::idt::IPI_VECTOR);
             }
         }
     }
@@ -379,14 +374,13 @@ pub fn reschedule(frame: &mut TrapFrame) {
         if Some(next_id) != current_id {
             let old_pid = current_id.and_then(|id| rq.tasks().get(&id)).map(|t| t.process.pid);
             
-            if let Some(curr_id) = current_id {
-                if let Some(old_task) = rq.tasks_mut().get_mut(&curr_id) {
-                    old_task.ctx.frame = *frame;
-                    if old_task.state == TaskState::Running {
-                        old_task.state = TaskState::Runnable;
-                    }
-                    unsafe { core::arch::x86_64::_fxsave64(old_task.ctx.fpu_state.area.as_mut_ptr()); }
+            if let Some(curr_id) = current_id
+            && let Some(old_task) = rq.tasks_mut().get_mut(&curr_id) {
+                old_task.ctx.frame = *frame;
+                if old_task.state == TaskState::Running {
+                    old_task.state = TaskState::Runnable;
                 }
+                unsafe { core::arch::x86_64::_fxsave64(old_task.ctx.fpu_state.area.as_mut_ptr()); }
             }
             
             if let Some(new_task) = rq.tasks_mut().get_mut(&next_id) {
@@ -416,15 +410,16 @@ pub fn reschedule(frame: &mut TrapFrame) {
         }
     } else {
         // No next task, just update the current task's frame (e.g. idle task)
-        if let Some(curr_id) = current_id {
-            if let Some(curr_task) = rq.tasks_mut().get_mut(&curr_id) {
-                curr_task.ctx.frame = *frame;
-                curr_task.cpu_locality += 1;
-            }
+        if let Some(curr_id) = current_id
+        && let Some(curr_task) = rq.tasks_mut().get_mut(&curr_id) {
+            curr_task.ctx.frame = *frame;
+            curr_task.cpu_locality += 1;
         }
     }
 }
 
+/// # Safety
+/// Not called directly from Rust code
 #[unsafe(naked)]
 pub unsafe extern "C" fn _yield_wrapper() -> ! {
     naked_asm!(
@@ -439,6 +434,8 @@ pub unsafe extern "C" fn _yield_wrapper() -> ! {
     );
 }
 
+/// # Safety
+/// Not called directly from Rust code
 #[unsafe(naked)]
 pub unsafe extern "C" fn yield_wrapper() -> ! {
     naked_asm!(
@@ -563,8 +560,8 @@ pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, is_user: bool) 
 }
 
 pub fn set_rt_deadline(task_id: TaskId, deadline_ms: u64) {
-    for cpu in 0..crate::arch::num_cpus() {
-        let mut rq = RUNQUEUES[cpu].lock();
+    for rq in RUNQUEUES.iter().take(crate::arch::num_cpus()) {
+        let mut rq = rq.lock();
         if rq.tasks().contains_key(&task_id) {
             rq.set_rt_deadline(task_id, deadline_ms);
             return;

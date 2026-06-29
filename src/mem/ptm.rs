@@ -72,11 +72,15 @@ pub struct Polen {
     pub exco: Exco,
 }
 
-impl Polen {
-    pub fn new() -> Self {
+impl Default for Polen {
+    fn default() -> Self {
         debug!("Polen::new");
         Polen { exco: Exco::new() }
     }
+}
+
+impl Polen {
+    pub fn new() -> Self { Self::default() }
 
     pub const fn from_exco(exco: Exco) -> Self {
         Polen { exco }
@@ -429,6 +433,8 @@ impl Polen {
         None
     }
 
+    /// # Safety
+    /// Caller must guarantee that `self` contains correct page tables with preserving kernel pages
     #[inline(always)]
     pub unsafe fn activate(&self) {
         unsafe {

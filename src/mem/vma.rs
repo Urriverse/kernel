@@ -503,12 +503,16 @@ pub struct Vmm {
     tree: Nutex<VmaTree>,
 }
 
-impl Vmm {
-    pub const fn new() -> Self {
+impl const Default for Vmm {
+    fn default() -> Self {
         Self {
             tree: Nutex::new(VmaTree::new()),
         }
     }
+}
+
+impl Vmm {
+    pub const fn new() -> Self { Self::default() }
 
     pub fn alloc(&self, size: usize, align: usize, flags: VmaFlags, hint: usize) -> Option<usize> {
         let mut guard = self.tree.lock();

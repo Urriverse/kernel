@@ -507,9 +507,9 @@ pub fn walk_entry(
 #[derive(Debug)]
 pub struct Tab(pub [Entry; 512]);
 
-impl Tab {
+impl const Default for Tab {
     /// Creates a new, zero‑initialised page table.
-    pub const fn new() -> Self {
+    fn default() -> Self {
         Self([
             const {
                 Entry::new(
@@ -520,6 +520,11 @@ impl Tab {
             512
         ])
     }
+}
+
+impl Tab {
+    /// Creates a new, zero‑initialised page table.
+    pub const fn new() -> Self { Self::default() }
 }
 
 impl Index<usize> for Tab {
@@ -569,6 +574,15 @@ pub struct Exco {
     pub owned: bool,
 }
 
+impl Default for Exco {
+    fn default() -> Self {
+        let root = alloc_tab_zeroed();
+        let cr3 = Vaddr::from_ref(&*root).to_phys().to_raw() as u64;
+        info!("Exco::new   CR3 {:#018X} owned", cr3);
+        Exco { cr3, root, owned: true }
+    }
+}
+
 impl Exco {
     // ------------------------------------------------------------------------
     // CONSTRUCTORS
@@ -580,12 +594,7 @@ impl Exco {
     }
 
     /// Creates a new empty address space (allocates a new PML4).
-    pub fn new() -> Self {
-        let root = alloc_tab_zeroed();
-        let cr3 = Vaddr::from_ref(&*root).to_phys().to_raw() as u64;
-        info!("Exco::new   CR3 {:#018X} owned", cr3);
-        Exco { cr3, root, owned: true }
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Duplicates the current address space (copy‑on‑write style).
     ///

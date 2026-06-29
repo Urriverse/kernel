@@ -129,6 +129,7 @@ impl LocalApic {
     ///
     /// The handle is a ZST and can be created cheaply.
     #[inline(always)]
+    #[allow(clippy::new_without_default)]
     pub const fn new() -> Self { INSTANCE }
 
     // ========================================================================

@@ -26,8 +26,8 @@ pub struct Pvfs {
     nxt: Litex<u32>,                     // next free inode number
 }
 
-impl Pvfs {
-    pub fn new() -> Self {
+impl Default for Pvfs {
+    fn default() -> Self {
         Self {
             reg: Litex::new(BTreeMap::new()),
             data: Litex::new(BTreeMap::new()),
@@ -35,6 +35,8 @@ impl Pvfs {
         }
     }
 }
+
+impl Pvfs { pub fn new() -> Self { Self::default() } }
 
 impl FileSystem for Pvfs {
     fn lookup(&self, dir: InodeId, name: &str) -> Option<InodeId> {
@@ -126,10 +128,9 @@ impl FileSystem for Pvfs {
         };
 
         // 2. Check if target is a non-empty directory
-        if let Some(Data::Dir(entries)) = data_guard.get(&target_inode_id) {
-            if !entries.is_empty() {
-                return Err(Error::NotEmpty);
-            }
+        if let Some(Data::Dir(entries)) = data_guard.get(&target_inode_id)
+        && !entries.is_empty() {
+            return Err(Error::NotEmpty);
         }
 
         // 3. Safe to remove the dentry

@@ -23,11 +23,11 @@ impl RootReg {
     /// Insert only if the name is free.
     pub fn mount_new(&self, name: String, root: InodeId) -> Result<(), InodeId> {
         let mut map = self.0.lock();
-        if map.contains_key(&name) {
-            Err(root)
-        } else {
-            map.insert(name, root);
+        if let alloc::collections::btree_map::Entry::Vacant(e) = map.entry(name) {
+            e.insert(root);
             Ok(())
+        } else {
+            Err(root)
         }
     }
 

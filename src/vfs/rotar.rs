@@ -49,7 +49,7 @@ fn parse_octal(bytes: &[u8]) -> usize {
     let mut res = 0;
     for &b in bytes {
         if b == 0 || b == b' ' || b == b'\n' { break; }
-        if b >= b'0' && b <= b'7' {
+        if (b'0'..=b'7').contains(&b) {
             res = res * 8 + (b - b'0') as usize;
         } else {
             break;

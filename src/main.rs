@@ -48,6 +48,7 @@
 #![feature(const_trait_impl)]
 #![feature(likely_unlikely)]
 #![feature(const_cmp)]
+#![feature(const_default)]
 #![feature(naked_functions_rustic_abi)]
 
 #![allow(clippy::missing_transmute_annotations)]
@@ -76,6 +77,7 @@ pub extern crate lazy_static;
 #[macro_use]
 pub extern crate alloc;
 
+#[allow(clippy::useless_attribute)]
 #[allow(unused)] // cargo check false positive
 #[macro_use]
 pub extern crate ketypes;

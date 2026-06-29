@@ -198,8 +198,8 @@ pub struct Soa {
     classes: [SlabClass; CLASS_SIZES.len()],
 }
 
-impl Soa {
-    pub const fn new() -> Self {
+impl const Default for Soa {
+    fn default() -> Self {
         Self {
             classes: [
                 SlabClass::new(CLASS_SIZES[0]),
@@ -214,6 +214,10 @@ impl Soa {
             ],
         }
     }
+}
+
+impl Soa {
+    pub const fn new() -> Self { Self::default() }
 
     fn find_class(&self, layout: Layout) -> Option<usize> {
         if layout.align() > 8 {

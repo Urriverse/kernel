@@ -46,8 +46,8 @@ pub struct Runqueue {
     load: u64,
 }
 
-impl Runqueue {
-    pub const fn new() -> Self {
+impl const Default for Runqueue {
+    fn default() -> Self {
         Self {
             tasks: BTreeMap::new(),
             by_deadline: BTreeSet::new(),
@@ -57,6 +57,10 @@ impl Runqueue {
             load: 0,
         }
     }
+}
+
+impl Runqueue {
+    pub const fn new() -> Self { Self::default() }
 
     pub fn tasks(&self) -> &BTreeMap<TaskId, Box<Task>> { &self.tasks }
     pub fn tasks_mut(&mut self) -> &mut BTreeMap<TaskId, Box<Task>> { &mut self.tasks }
@@ -154,21 +158,19 @@ impl Runqueue {
             // If a task called `sleep()`, it was already removed from `by_deadline` 
             // and `self.load` by `sleep_task()`, but it remains `self.current` until 
             // the context switch in `reschedule()` completes.
-            let is_in_trees = self.tasks.get(&curr_id).map_or(false, |t| {
+            let is_in_trees = self.tasks.get(&curr_id).is_some_and(|t| {
                 t.state != TaskState::Sleeping && t.state != TaskState::Zombie
             });
 
-            if is_in_trees {
-                if let Some(mut task) = self.remove(curr_id) {
-                    if task.rt_deadline == 0 {
-                        let delta_vruntime = (delta_ms as u128 * NICE_0_WEIGHT as u128 / task.weight as u128) as u64;
-                        task.vruntime += delta_vruntime;
-                        if task.vruntime >= task.deadline {
-                            task.deadline = task.vruntime + task.slice;
-                        }
+            if is_in_trees && let Some(mut task) = self.remove(curr_id) {
+                if task.rt_deadline == 0 {
+                    let delta_vruntime = (delta_ms as u128 * NICE_0_WEIGHT as u128 / task.weight as u128) as u64;
+                    task.vruntime += delta_vruntime;
+                    if task.vruntime >= task.deadline {
+                        task.deadline = task.vruntime + task.slice;
                     }
-                    self.insert(task);
                 }
+                self.insert(task);
             }
         }
         self.advance_min_vruntime();
@@ -183,14 +185,13 @@ impl Runqueue {
 
     pub fn pick_next(&mut self) -> Option<TaskId> {
         for key in self.rt_tasks.iter() {
-            if let Some(task) = self.tasks.get(&key.id) {
-                if task.state == TaskState::Runnable {
-                    let now = crate::arch::get_time_from_boot();
-                    if now > key.deadline && key.deadline > 0 {
-                        crate::warn!("NVDL: RT task {} missed deadline!", key.id.0);
-                    }
-                    return Some(key.id);
+            if let Some(task) = self.tasks.get(&key.id)
+            && task.state == TaskState::Runnable {
+                let now = crate::arch::get_time_from_boot();
+                if now > key.deadline && key.deadline > 0 {
+                    crate::warn!("NVDL: RT task {} missed deadline!", key.id.0);
                 }
+                return Some(key.id);
             }
         }
 

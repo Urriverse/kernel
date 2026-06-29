@@ -209,12 +209,14 @@ pub fn init() {
     info!("Initialized");
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn subscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()> {
     let mut guard = SUBSCRIBERS.write();
-    guard.entry(event_id).or_insert_with(Vec::new).push(Subscriber { callback });
+    guard.entry(event_id).or_default().push(Subscriber { callback });
     Ok(())
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn unsubscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()> {
     let mut guard = SUBSCRIBERS.write();
     if let Some(subs) = guard.get_mut(&event_id) {
@@ -228,6 +230,7 @@ pub fn unsubscribe(event_id: EventId, callback: EventCallback) -> Result<(), ()>
     }
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn publish(event_id: EventId, data: usize, affinity: Option<usize>) -> Result<(), ()> {
     let event = Event { id: event_id, data };
     match affinity {

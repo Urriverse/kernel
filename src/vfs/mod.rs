@@ -132,11 +132,10 @@ fn resolve_path(path: &str, cross_mounts: bool) -> Result<(KeInodeId, Arc<KeMeta
                     let mut next_id = child_id;
                     
                     // If we hit a mount point and are allowed to cross it, switch KeMetaBlock
-                    if cross_mounts && is_mount_point(child_id) {
-                        if let Some(mb) = get_mblock(child_id.1) {
-                            next_mb = mb;
-                            next_id = child_id; // The ID acts as the root of the new FS
-                        }
+                    if cross_mounts && is_mount_point(child_id)
+                    && let Some(mb) = get_mblock(child_id.1) {
+                        next_mb = mb;
+                        next_id = child_id; // The ID acts as the root of the new FS}
                     }
                     path_stack.push((next_id, next_mb));
                 }

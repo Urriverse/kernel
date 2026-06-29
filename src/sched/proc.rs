@@ -33,8 +33,8 @@ fn next() -> u32 {
     rv
 }
 
-impl Process {
-    pub fn new() -> Self {
+impl Default for Process {
+    fn default() -> Self {
         Self {
             pid: next(),
             parent: None,
@@ -48,6 +48,8 @@ impl Process {
         }
     }
 }
+
+impl Process { pub fn new() -> Self { Self::default() } }
 
 impl Clone for Process {
     fn clone(&self) -> Self {

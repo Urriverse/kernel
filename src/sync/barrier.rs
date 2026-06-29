@@ -85,13 +85,17 @@ pub struct Barrier {
     open: AtomicBool,
 }
 
-impl Barrier {
-    /// Creates a new `Barrier` in the closed state.
-    pub const fn new() -> Self {
+impl const Default for Barrier {
+    fn default() -> Self {
         Self {
             open: AtomicBool::new(false),
         }
     }
+}
+
+impl Barrier {
+    /// Creates a new `Barrier` in the closed state.
+    pub const fn new() -> Self { Self::default() }
 
     /// Opens the barrier, allowing all waiting tasks to proceed.
     ///

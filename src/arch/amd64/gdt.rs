@@ -157,18 +157,8 @@ pub struct Dtr {
     pub base: u64,
 }
 
-impl Gdt {
-    /// Creates a new GDT with default segment descriptors.
-    ///
-    /// The descriptors are set up as follows:
-    /// - **Null**: All zero.
-    /// - **Kernel Code**: Present, Ring 0, 64‑bit, readable, executable.
-    /// - **Kernel Data**: Present, Ring 0, writable.
-    /// - **User Code**: Present, Ring 3, 64‑bit, readable, executable.
-    /// - **User Data**: Present, Ring 3, writable.
-    ///
-    /// TSS descriptors are zero‑initialized and must be set with `set_tss()`.
-    pub const fn new() -> Self {
+impl const Default for Gdt {
+    fn default() -> Self {
         let mut entries = [0u64; 5 + (MAX_CPUS * 2)];
 
         // 0. Null descriptor (required by x86)
@@ -192,6 +182,20 @@ impl Gdt {
 
         Self { entries }
     }
+}
+
+impl Gdt {
+    /// Creates a new GDT with default segment descriptors.
+    ///
+    /// The descriptors are set up as follows:
+    /// - **Null**: All zero.
+    /// - **Kernel Code**: Present, Ring 0, 64‑bit, readable, executable.
+    /// - **Kernel Data**: Present, Ring 0, writable.
+    /// - **User Code**: Present, Ring 3, 64‑bit, readable, executable.
+    /// - **User Data**: Present, Ring 3, writable.
+    ///
+    /// TSS descriptors are zero‑initialized and must be set with `set_tss()`.
+    pub const fn new() -> Self { Self::default() }
 
     /// Loads the GDT and reloads segment registers.
     ///

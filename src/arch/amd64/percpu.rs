@@ -93,15 +93,20 @@ pub struct PerCpu {
     pub cpu_id: usize,
 }
 
-impl PerCpu {
+impl const Default for PerCpu {
     /// Creates a new, zero‑initialized `PerCpu` structure.
-    pub const fn new() -> Self {
+    fn default() -> Self {
         Self {
             cpu_id: 0,
             kernel_stack_top: 0,
             user_rsp: 0,
         }
     }
+}
+
+impl PerCpu {
+    /// Creates a new, zero‑initialized `PerCpu` structure.
+    pub const fn new() -> Self { Self::default() }
 }
 
 // ============================================================================
