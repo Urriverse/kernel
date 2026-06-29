@@ -89,6 +89,7 @@ pub fn init(elf: &[u8]) {
         if let Ok(name) = strtab.get(sym.st_name as usize) {
             trace!("Found symbol {}", name);
             if KESYMTAB.contains_key(&name) {
+                trace!("Linking {} -> {:p}...", name, KESYMTAB[&name] as *const ());
                 *unsafe { module.dive(&sym) } = KESYMTAB[&name];
                 trace!("Linked {}", name);
             } else if name.starts_with("Ke") {
