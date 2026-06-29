@@ -65,6 +65,8 @@ impl<'a> Module<'a> {
 
         let hhdm_base = paddr.to_virt().to_raw();
 
+        debug!("hhdm_base {:p}", hhdm_base as *const ());
+
         unsafe { core::ptr::write_bytes(hhdm_base as *mut u8, 0, total_size); }
 
         if let Some(segments) = bytes.segments() {
