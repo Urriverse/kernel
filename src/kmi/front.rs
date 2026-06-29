@@ -1,8 +1,9 @@
 #![allow(non_snake_case)]
 
 use ketypes::*;
+use nopaque::*;
 
-pub fn KeVtDeviceNew(name: KeStr) -> Hdl![Device] {
+pub extern "Rust" fn KeVtDeviceNew(name: KeStr) -> Arc![@Device] {
     trace!("KeVtDeviceNew name={:?}", name);
-    <hdl![Device]>::new(crate::dev::Device::new(name))
+    <arc![@Device]>::new(crate::dev::Device::new(name))
 }
