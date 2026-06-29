@@ -5,7 +5,7 @@ pub mod front;
 lazy_static! {
     static ref KESYMTAB: alloc::collections::BTreeMap<&'static str, usize> = auto_btm!
     {
-        "KeTest"                    => front::KeTest                        as *const () as usize,
+        "KeTest"                    => crate::dev::Device::add_method       as *const () as usize,
 
         "KeVtDeviceNew"             => crate::dev::Device::new              as *const () as usize,
 
