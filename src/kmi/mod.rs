@@ -3,8 +3,8 @@ use nopaque::*;
 pub mod mbs;
 pub mod front;
 
-pub fn kvdn(name: &'static str) -> Arc![@Device] {
-    <arc![@Device]>::new(crate::dev::Device::new(name))
+pub fn kvdn(name: &'static str) -> Box![@Device] {
+    <boxed![@Device]>::new(crate::dev::Device::new(name))
 }
 
 // here type erasure is safe as we save contract on module's side.
@@ -87,9 +87,10 @@ pub fn init(elf: &[u8]) {
     // link it to the kernel
     for sym in symtab {
         if let Ok(name) = strtab.get(sym.st_name as usize) {
+            trace!("Found symbol {}", name);
             if KESYMTAB.contains_key(&name) {
-                trace!("Linked {}", name);
                 *unsafe { module.dive(&sym) } = KESYMTAB[&name];
+                trace!("Linked {}", name);
             } else if name.starts_with("Ke") {
                 warn!("Symbol `{}` looks like Kexport, but unknown for kernel", name);
             }
@@ -97,6 +98,6 @@ pub fn init(elf: &[u8]) {
     }
 
     // run module
-    let _ = module.run();
-    trace!("module started");
+    let id = module.run();
+    trace!("module started with task id {}", id.0);
 }
