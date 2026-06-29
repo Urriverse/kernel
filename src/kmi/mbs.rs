@@ -188,13 +188,11 @@ impl<'a> Module<'a> {
         Vaddr::from_raw(va)
     }
 
-    pub unsafe fn dive<T>(&self, sym: &elf::symbol::Symbol) -> &mut T {
+    pub unsafe fn dive<T>(&self, sym: &elf::symbol::Symbol) -> Option<&mut T> {
         if let Some(va) = self.offset.checked_add(sym.st_value as usize) {
-            return Vaddr::from_raw(va).to_ref_mut()
-        } else {
-            error!("Symbol {} could not be resolved :: {:p}", self.symbols().unwrap().1.get(sym.st_name as usize).unwrap(), sym.st_value as *const ());
-            unsafe { (self.offset as *mut T).as_mut_unchecked() }
-        }
+            return Some(Vaddr::from_raw(va).to_ref_mut())
+        } 
+        None
     }
 
     pub fn run(&self) -> TaskId {
