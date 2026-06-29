@@ -8,6 +8,6 @@ pub extern "Rust" fn KeVtDeviceNew(name: KeStr) -> Arc![@Device] {
     <arc![@Device]>::new(crate::dev::Device::new(name))
 }
 
-pub extern "Rust" fn KeTest() {
+pub fn KeTest() {
     error!("TEST");
 }
