@@ -4,7 +4,10 @@ pub mod mbs;
 pub mod front;
 
 pub fn kvdn(name: &'static str) -> Box![@Device] {
-    <boxed![@Device]>::new(crate::dev::Device::new(name))
+    trace!("Hey!");
+    let rv = <boxed![@Device]>::new(crate::dev::Device::new(name));
+    trace!("Bye!");
+    rv
 }
 
 // here type erasure is safe as we save contract on module's side.
