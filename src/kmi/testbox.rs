@@ -158,7 +158,7 @@ impl<const _T: usize, Tx> Box<_T, Tx> {
         trace!("K");
         meta.drop = call_implicit_drop::<T>;
         trace!("L");
-        *data = t;
+        *data = t;  // this line shoots
         trace!("M");
         let rv = Self(addr as usize + padding + size_of::<Meta>(), PhantomData);
         trace!("N");

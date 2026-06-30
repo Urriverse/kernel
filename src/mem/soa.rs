@@ -216,17 +216,14 @@ impl const Default for Soa {
     }
 }
 
+
 impl Soa {
     pub const fn new() -> Self { Self::default() }
 
     fn find_class(&self, layout: Layout) -> Option<usize> {
-        if layout.align() > 8 {
-            return None;
-        }
-        let mut size = layout.size();
-        if size == 0 {
-            size = 1;
-        }
+        let align_size = core::cmp::max(layout.size(), layout.align());
+        let mut size = 1;
+        while size < align_size { size <<= 1 }
         if size > 2048 {
             return None;
         }
@@ -265,7 +262,7 @@ pub fn free(ptr: *mut u8, layout: Layout) {
 
     let soa = unsafe { &SOA_INSTANCE };
 
-    if layout.align() > 8 || layout.size() > 2048 {
+    if layout.size() > 2048 {
         let vaddr = Vaddr::from_raw(ptr as usize);
         upa::free(vaddr.to_phys());
     } else {
