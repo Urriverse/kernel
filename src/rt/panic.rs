@@ -5,12 +5,7 @@ use crate::{kmsg, sync::Nutex};
 static mut PANIC_BUF: heapless::String<64> = heapless::String::<64>::new();
 
 #[inline(never)]
-fn print_stack_trace() {
-    let mut bp: usize;
-    unsafe {
-        core::arch::asm!("mov {}, rbp", out(reg) bp);
-    }
-
+pub fn print_stack_trace(bp: usize) {
     let mut frame_ptr = bp;
     let mut count = 0;
 
@@ -80,7 +75,12 @@ pub fn panic(info: &core::panic::PanicInfo) -> ! {
         &s,
     ) };
 
-    print_stack_trace();
+    let mut bp: usize;
+    unsafe {
+        core::arch::asm!("mov {}, rbp", out(reg) bp);
+    }
+
+    print_stack_trace(bp);
 
     drop(_g1);
     drop(_g2);

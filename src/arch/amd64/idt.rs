@@ -256,6 +256,7 @@ extern "x86-interrupt" fn stack_segment_fault_handler(frame: InterruptStackFrame
 extern "x86-interrupt" fn general_protection_fault_handler(frame: InterruptStackFrame, error_code: u64) {
     error!("!!! CRITICAL EXCEPTION 13: GENERAL_PROTECTION_FAULT on CPU#{} (Error Code: {:#X})", current_cpu(), error_code);
     print_frame(&frame);
+    crate::rt::panic::print_stack_trace(frame.stack_pointer.as_u64() as usize);
     panic!("Unhandled critical exception: General Protection Fault");
 }
 
