@@ -5,11 +5,11 @@ use crate::dev::Device;
 pub mod mbs;
 pub mod front;
 
-pub fn kvdn(name: &'static str) -> Arc![&Device] {
+pub fn kvdn(name: &'static str) -> Box![&Device] {
     trace!("Hey!");
     let device = crate::dev::Device::new(name);
     trace!("Point");
-    let rv = <arc![&Device]>::new(device);
+    let rv = <boxed![&Device]>::new(device);
     trace!("Bye!");
     rv
 }
