@@ -1,6 +1,7 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 use core::debug_assert;
+use core::mem::size_of;
 use crate::mem::{upa, kdm::Vaddr};
 use crate::sync::Nutex;
 
@@ -38,9 +39,13 @@ struct SlabClass {
 impl SlabClass {
     const fn new(size: usize) -> Self {
         let header_size = size_of::<SlabHeader>();
-        let first_obj_offset = (header_size + 7) & !7;
+        // Align the first object offset to the class size instead of hardcoded 8.
+        // Since CLASS_SIZES are powers of two, `(header_size + size - 1) & !(size - 1)`
+        // correctly rounds up to the next multiple of `size`.
+        let first_obj_offset = (header_size + size - 1) & !(size - 1);
         
         let obj_per_slab = (PAGE_SIZE - first_obj_offset) / size;
+        debug_assert!(obj_per_slab > 0, "Slab class too large to fit any objects");
         
         Self {
             size,
@@ -215,7 +220,6 @@ impl const Default for Soa {
         }
     }
 }
-
 
 impl Soa {
     pub const fn new() -> Self { Self::default() }
