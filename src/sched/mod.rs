@@ -431,22 +431,6 @@ pub fn reschedule(frame: &mut TrapFrame) {
 /// # Safety
 /// Not called directly from Rust code
 #[unsafe(naked)]
-pub unsafe extern "C" fn _yield_wrapper() -> ! {
-    naked_asm!(
-        "mov rax, [rsp + 8]", "and rax, 3", "cmp rax, 3", "jne 1f", "swapgs", "1:",
-        "push r15", "push r14", "push r13", "push r12", "push r11", "push r10", "push r9", "push r8",
-        "push rbp", "push rdi", "push rsi", "push rdx", "push rcx", "push rbx", "push rax",
-        "mov rdi, rsp", "call {scheduler_tick}",
-        "pop rax", "pop rbx", "pop rcx", "pop rdx", "pop rsi", "pop rdi", "pop rbp", "pop r8",
-        "pop r9", "pop r10", "pop r11", "pop r12", "pop r13", "pop r14", "pop r15",
-        "mov rax, [rsp + 8]", "and rax, 3", "cmp rax, 3", "jne 2f", "swapgs", "2:", "iretq",
-        scheduler_tick = sym reschedule,
-    );
-}
-
-/// # Safety
-/// Not called directly from Rust code
-#[unsafe(naked)]
 pub unsafe extern "C" fn yield_wrapper() -> ! {
     naked_asm!(
         // Entry swapgs check (CS is at RSP+8 before any pushes)

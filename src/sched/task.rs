@@ -103,7 +103,7 @@ impl Default for Task {
         frame.rsp = initial_rsp as u64;
         frame.cs = 0x08;
         frame.ss = 0x10;
-        let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
+        // let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
         frame.rflags = 0x202;
         
         Self {
@@ -144,7 +144,7 @@ impl Task {
         frame.rsp = initial_rsp as u64;
         frame.cs = 0x08;
         frame.ss = 0x10;
-        let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
+        // let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
         frame.rflags = 0x202;
         
         Box::new(Self {
@@ -187,7 +187,7 @@ impl Task {
         frame.rdi = arg as u64;
         frame.cs = 0x08;
         frame.ss = 0x10;
-        let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
+        // let gs: u16; unsafe { core::arch::asm! { "mov {:x}, gs", out(reg) gs } } frame.gs = gs as u64;
         frame.rflags = 0x202;
         
         Box::new(Self {
