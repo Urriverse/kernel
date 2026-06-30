@@ -228,7 +228,6 @@ impl Soa {
         let align_size = core::cmp::max(layout.size(), layout.align());
         let mut size = 1;
         while size < align_size { size <<= 1 }
-        trace!("allocating class {} for layout {:?}", size, layout);
         if size > 2048 { return None }
         CLASS_SIZES.iter().position(|&s| s >= size)
     }
