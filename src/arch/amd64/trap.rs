@@ -121,6 +121,8 @@ pub struct TrapFrame {
     pub r14: u64,
     /// R15 – general‑purpose register, callee‑saved.
     pub r15: u64,
+    
+    pub gs: u64,
 
     // ========================================================================
     // Hardware‑saved registers (pushed by the CPU or manually constructed)
