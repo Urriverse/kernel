@@ -322,3 +322,12 @@ macro_rules! auto_btm {
         map
     }};
 }
+
+#[macro_export]
+macro_rules! Export {
+    ($i:ident => $n:ident, since $x:literal.$y:literal) => {
+        #[used] pub $n: _ = $i;
+        #[used] pub [< $n _maj >]: _ = $x;
+        #[used] pub [< $n _min >]: _ = $y;
+    };
+}
