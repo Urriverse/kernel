@@ -42,6 +42,17 @@ pub fn print_stack_trace(mut frame_ptr: usize) {
         frame_ptr = unsafe { *(frame_ptr as *const usize) };
         count += 1;
     }
+
+    msg = heapless::String::<32>::new();
+    let _ = msg.write_fmt(format_args!("  ..."));
+
+    unsafe { kmsg::str_log_noblock(
+        kmsg::KeAttLvl::Error,
+        "",
+        file!(),
+        line!(),
+        msg.as_str()
+    ) };
 }
 
 static PANIC_LOCK: Nutex<()> = Nutex::new(());
