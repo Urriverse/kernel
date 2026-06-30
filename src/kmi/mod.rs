@@ -105,10 +105,11 @@ pub fn init(elf: &[u8]) {
             }
 
             if name.starts_with("Ki") {
-                if KESYMTAB.contains_key(&name[2..]) {
-                    trace!("Linking `{}` -> {:p}...", name, KESYMTAB[&name] as *const ());
+                let name = &name[2..];
+                trace!("Linking `{}`", name);
+                if KESYMTAB.contains_key(name) {
                     if let Some(r) = module.dive(&sym) {
-                        *r = KESYMTAB[&name];
+                        *r = KESYMTAB[name];
                     } else {
                         error!("Failed to resolve address of symbol `{}`", name);
                     }
