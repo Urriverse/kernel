@@ -109,6 +109,7 @@ pub fn init(elf: &[u8]) {
                 trace!("Linking `{}`", name);
                 if KESYMTAB.contains_key(name) {
                     if let Some(r) = module.dive(&sym) {
+                        trace!("Assigning {} (address behind {}) to {}", *r, name, KESYMTAB[name]);
                         *r = KESYMTAB[name];
                     } else {
                         error!("Failed to resolve address of symbol `{}`", name);
