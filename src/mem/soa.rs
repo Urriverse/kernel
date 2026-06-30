@@ -203,7 +203,7 @@ pub struct Soa {
     classes: [SlabClass; CLASS_SIZES.len()],
 }
 
-impl const Default for Soa {
+const impl Default for Soa {
     fn default() -> Self {
         Self {
             classes: [

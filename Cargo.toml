@@ -14,7 +14,7 @@ x86_64 = "0"
 acpi = { version = "6", features = ["alloc"] }
 elf = { version = "0", default-features = false }
 ketypes = { git = "https://github.com/Urriverse/ketypes.git", branch = "main" }
-nopaque = { git = "https://github.com/vi-is-ramen/nopaque.git", branch = "main", default-features = false }
+apaque = { git = "https://github.com/vi-is-ramen/apaque.git", branch = "main", default-features = false }
 
 [profile.dev]
 panic = "abort"

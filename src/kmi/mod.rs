@@ -6,7 +6,7 @@ pub mod mbs;
 pub mod front;
 pub mod testbox;
 
-use testbox::{Box, boxed};
+use apaque::{Box, boxed};
 
 pub fn kvdn(name: &'static str) -> Box![&Device] {
     trace!("Hey!");

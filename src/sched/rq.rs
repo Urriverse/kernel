@@ -46,7 +46,7 @@ pub struct Runqueue {
     load: u64,
 }
 
-impl const Default for Runqueue {
+const impl Default for Runqueue {
     fn default() -> Self {
         Self {
             tasks: BTreeMap::new(),

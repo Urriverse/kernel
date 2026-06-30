@@ -503,7 +503,7 @@ pub struct Vmm {
     tree: Nutex<VmaTree>,
 }
 
-impl const Default for Vmm {
+const impl Default for Vmm {
     fn default() -> Self {
         Self {
             tree: Nutex::new(VmaTree::new()),

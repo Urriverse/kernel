@@ -93,7 +93,7 @@ pub struct PerCpu {
     pub cpu_id: usize,
 }
 
-impl const Default for PerCpu {
+const impl Default for PerCpu {
     /// Creates a new, zero‑initialized `PerCpu` structure.
     fn default() -> Self {
         Self {

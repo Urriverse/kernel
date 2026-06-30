@@ -85,7 +85,7 @@ pub struct Barrier {
     open: AtomicBool,
 }
 
-impl const Default for Barrier {
+const impl Default for Barrier {
     fn default() -> Self {
         Self {
             open: AtomicBool::new(false),

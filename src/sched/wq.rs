@@ -4,7 +4,7 @@ use super::task::TaskId;
 
 pub struct WaitQueue { waiters: VecDeque<TaskId>, }
 
-impl const Default for WaitQueue { fn default() -> Self { Self { waiters: VecDeque::new() } } }
+const impl Default for WaitQueue { fn default() -> Self { Self { waiters: VecDeque::new() } } }
 
 impl WaitQueue {
     pub const fn new() -> Self { Self::default() }

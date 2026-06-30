@@ -157,7 +157,7 @@ pub struct Dtr {
     pub base: u64,
 }
 
-impl const Default for Gdt {
+const impl Default for Gdt {
     fn default() -> Self {
         let mut entries = [0u64; 5 + (MAX_CPUS * 2)];
 

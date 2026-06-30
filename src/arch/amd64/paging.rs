@@ -507,7 +507,7 @@ pub fn walk_entry(
 #[derive(Debug)]
 pub struct Tab(pub [Entry; 512]);
 
-impl const Default for Tab {
+const impl Default for Tab {
     /// Creates a new, zero‑initialised page table.
     fn default() -> Self {
         Self([
