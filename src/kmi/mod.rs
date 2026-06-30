@@ -7,7 +7,9 @@ pub mod front;
 
 pub fn kvdn(name: &'static str) -> Arc![&Device] {
     trace!("Hey!");
-    let rv = <arc![&Device]>::new(crate::dev::Device::new(name));
+    let device = crate::dev::Device::new(name);
+    trace!("Point");
+    let rv = <arc![&Device]>::new(device);
     trace!("Bye!");
     rv
 }
