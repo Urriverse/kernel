@@ -135,20 +135,34 @@ impl<const _T: usize, Tx> Box<_T, Tx> {
     ///
     /// This function will panic if the allocation fails (rare in practice).
     pub fn new<T>(t: T) -> Self {
+        trace!("A");
         let align = max(align_of::<T>(), 8);
+        trace!("B");
         let padding = (align - size_of::<Meta>() % align) % align;
+        trace!("c");
         let size = padding + size_of::<Meta>() + size_of::<T>();
+        trace!("D");
         let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+        trace!("E");
         let addr = unsafe { alloc::alloc::alloc(layout) };
+        trace!("F");
         let meta = unsafe { ((addr as usize + padding) as *mut Meta).as_mut_unchecked() };
-        let data =
-            unsafe { ((addr as usize + padding + size_of::<Meta>()) as *mut T).as_mut_unchecked() };
+        trace!("G");
+        let data = unsafe { ((addr as usize + padding + size_of::<Meta>()) as *mut T).as_mut_unchecked() };
+        trace!("H");
         meta.at = addr;
+        trace!("I");
         meta.align = align as u16;
+        trace!("J");
         meta.size = size as u32;
+        trace!("K");
         meta.drop = call_implicit_drop::<T>;
+        trace!("L");
         *data = t;
-        Self(addr as usize + padding + size_of::<Meta>(), PhantomData)
+        trace!("M");
+        let rv = Self(addr as usize + padding + size_of::<Meta>(), PhantomData);
+        trace!("N");
+        rv
     }
 }
 
