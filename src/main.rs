@@ -49,6 +49,7 @@
 #![feature(likely_unlikely)]
 #![feature(const_cmp)]
 #![feature(const_default)]
+#![feature(decl_macro)]
 #![feature(naked_functions_rustic_abi)]
 
 #![allow(clippy::missing_transmute_annotations)]

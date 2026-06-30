@@ -1,15 +1,18 @@
-use nopaque::*;
+// use nopaque::*;
 
 use crate::dev::Device;
 
 pub mod mbs;
 pub mod front;
+pub mod testbox;
+
+use testbox::{Box, boxed};
 
 pub fn kvdn(name: &'static str) -> Box![&Device] {
     trace!("Hey!");
     let device = crate::dev::Device::new(name);
     trace!("Point");
-    let rv = <boxed![&Device]>::new(device);
+    let rv: Box<_, Device> = <boxed![&Device]>::new(device);
     trace!("Bye!");
     rv
 }
