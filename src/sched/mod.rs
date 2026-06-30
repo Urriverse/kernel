@@ -165,7 +165,7 @@ pub static mut REAPER: TaskId = TaskId(0);
 pub fn exit(code: i32) -> ! {
     let cpu = current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
-    let current_id = rq.current_task_id().unwrap();
+    let current_id = rq.current_task_id().unwrap_or(TaskId(0));
     let mut task = rq.remove(current_id).unwrap();
 
     // let pid = task.process.pid;
