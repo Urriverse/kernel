@@ -95,7 +95,7 @@ impl Default for Task {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
         let kernel_stack = alloc_kstack(1<<15);
-        let initial_rsp = kernel_stack + 1<<15 - 8;
+        let initial_rsp = kernel_stack;
         unsafe {
             *(initial_rsp as *mut u64) = spur as *const () as u64;
         }
@@ -131,10 +131,11 @@ impl Default for Task {
 impl Task {
     pub fn new() -> Box<Self> { Box::new(Self::default()) }
 
-    pub fn new_nostack() -> Box<Self> {
+    pub fn new_nanostack() -> Box<Self> {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
-        let initial_rsp = usize::MAX;
+        let kernel_stack = alloc_kstack(1<<15);
+        let initial_rsp = kernel_stack;
         unsafe {
             *(initial_rsp as *mut u64) = spur as *const () as u64;
         }
@@ -152,7 +153,7 @@ impl Task {
             weight: Priority::nice_to_weight(Priority(0).0),
             slice: 10_000,
             ctx: Context { frame, fpu_state: FpuState::default() },
-            kernel_stack: 0,
+            kernel_stack,
             user_stack: 0,
             cpu_affinity: None,
             name: "".to_string(),

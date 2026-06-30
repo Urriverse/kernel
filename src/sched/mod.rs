@@ -33,10 +33,10 @@ pub fn init(ticks_per_10ms: u64) {
         let stack = alloc_kstack(32 * 1024);
         crate::arch::percpu::init_syscall_gs(cpu, stack);
 
-        let mut boot = Task::new_nostack();
+        let mut boot = Task::new_nanostack();
         boot.ctx.frame.rsp = addr_of!(SPUR) as u64 + 1024;
         boot.name = "boot".to_owned();
-        let mut idle = Task::new_nostack();
+        let mut idle = Task::new_nanostack();
         idle.ctx.frame.rip = idle_task as *const fn() as u64;
         idle.ctx.frame.rsp = stack as u64;
         idle.kernel_stack = stack;
