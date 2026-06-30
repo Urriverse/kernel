@@ -1,5 +1,5 @@
 // src/sched/task.rs
-use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, alloc_kstack, exit, proc::Process}};
+use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, alloc_kstack, current_process, exit, proc::Process}};
 use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::{borrow::ToOwned, boxed::Box, string::{String, ToString}, sync::Arc};
 
@@ -119,7 +119,7 @@ impl Default for Task {
             name: "".to_string(),
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process::new()),
+            process: match current_process() { Some(p) => p, None => Arc::new(Process::default()) },
             kernel_stack_top: initial_rsp,
             rt_deadline: 0,
             cpu_locality: 0,
@@ -159,7 +159,7 @@ impl Task {
             name: "".to_string(),
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process::new()),
+            process: match current_process() { Some(p) => p, None => Arc::new(Process::default()) },
             kernel_stack_top: initial_rsp,
             rt_deadline: 0,
             cpu_locality: 0,
@@ -201,7 +201,7 @@ impl Task {
             name,
             parent: None,
             exit_code: -1,
-            process: Arc::new(Process::new()),
+            process: match current_process() { Some(p) => p, None => Arc::new(Process::default()) },
             kernel_stack_top,
             rt_deadline: 0,
             cpu_locality: 0,
