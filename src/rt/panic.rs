@@ -5,9 +5,8 @@ use crate::{kmsg, sync::Nutex};
 static mut PANIC_BUF: heapless::String<64> = heapless::String::<64>::new();
 
 #[inline(never)]
-pub fn print_stack_trace(bp: usize) {
-    let mut frame_ptr = bp;
-    let mut count = 0;
+pub fn print_stack_trace(mut frame_ptr: usize) {
+    let mut count = 1;
 
     unsafe { kmsg::str_log_noblock(
         kmsg::KeAttLvl::Error,
@@ -17,12 +16,14 @@ pub fn print_stack_trace(bp: usize) {
         "Stack trace:"
     ) };
 
+    let mut msg = heapless::String::<32>::new();
+    let _ = msg.write_fmt(format_args!("  RSP 0x{:016X}", count, frame_ptr));
     unsafe { kmsg::str_log_noblock(
         kmsg::KeAttLvl::Error,
         "",
         file!(),
         line!(),
-        "$$ST:BEGIN$$"
+        msg.as_str()
     ) };
 
     while frame_ptr != 0 && count < 32 {
@@ -41,14 +42,6 @@ pub fn print_stack_trace(bp: usize) {
         frame_ptr = unsafe { *(frame_ptr as *const usize) };
         count += 1;
     }
-
-    unsafe { kmsg::str_log_noblock(
-        kmsg::KeAttLvl::Error,
-        "",
-        file!(),
-        line!(),
-        "$$ST:END$$"
-    ) };
 }
 
 static PANIC_LOCK: Nutex<()> = Nutex::new(());
