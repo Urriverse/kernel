@@ -1,5 +1,5 @@
 // src/sched/task.rs
-use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, proc::Process}};
+use crate::{arch::{current_cpu, trap::TrapFrame}, sched::{self, alloc_kstack, exit, proc::Process}};
 use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::{borrow::ToOwned, boxed::Box, string::{String, ToString}, sync::Arc};
 
@@ -88,20 +88,57 @@ fn spur() {
     sched::exit(-3);
 }
 
-impl Task {
-    pub fn new_kernel(
-        entry: fn(),
-        kernel_stack_top: usize,
-        priority: Priority,
-        name: alloc::string::String,
-    ) -> Box<Self> {
+fn spur_entry() { exit(-5) }
+
+impl Default for Task {
+    fn default() -> Self {
         let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
         let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
-        let initial_rsp = kernel_stack_top - 8;
+        let kernel_stack = alloc_kstack(1<<15);
+        let initial_rsp = kernel_stack + 1<<15 - 8;
         unsafe {
             *(initial_rsp as *mut u64) = spur as *const () as u64;
         }
-        frame.rip = entry as *const () as u64;
+        frame.rip = spur_entry as *const () as u64;
+        frame.rsp = initial_rsp as u64;
+        frame.cs = 0x08;
+        frame.ss = 0x10;
+        frame.rflags = 0x202;
+        
+        Self {
+            id,
+            state: TaskState::Runnable,
+            vruntime: 0,
+            deadline: 0,
+            weight: Priority::nice_to_weight(Priority(0).0),
+            slice: 10_000,
+            ctx: Context { frame, fpu_state: FpuState::default() },
+            kernel_stack,
+            user_stack: 0,
+            cpu_affinity: None,
+            name: "".to_string(),
+            parent: None,
+            exit_code: -1,
+            process: Arc::new(Process::new()),
+            kernel_stack_top: initial_rsp,
+            rt_deadline: 0,
+            cpu_locality: 0,
+            current_root: Box::new("initramfs".to_string()),
+        }
+    }
+}
+
+impl Task {
+    pub fn new() -> Box<Self> { Box::new(Self::default()) }
+
+    pub fn new_nostack() -> Box<Self> {
+        let id = TaskId(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
+        let mut frame = unsafe { core::mem::zeroed::<TrapFrame>() };
+        let initial_rsp = usize::MAX;
+        unsafe {
+            *(initial_rsp as *mut u64) = spur as *const () as u64;
+        }
+        frame.rip = spur_entry as *const () as u64;
         frame.rsp = initial_rsp as u64;
         frame.cs = 0x08;
         frame.ss = 0x10;
@@ -112,24 +149,24 @@ impl Task {
             state: TaskState::Runnable,
             vruntime: 0,
             deadline: 0,
-            weight: Priority::nice_to_weight(priority.0),
+            weight: Priority::nice_to_weight(Priority(0).0),
             slice: 10_000,
             ctx: Context { frame, fpu_state: FpuState::default() },
-            kernel_stack: kernel_stack_top,
+            kernel_stack: 0,
             user_stack: 0,
             cpu_affinity: None,
-            name,
+            name: "".to_string(),
             parent: None,
             exit_code: -1,
             process: Arc::new(Process::new()),
-            kernel_stack_top,
+            kernel_stack_top: initial_rsp,
             rt_deadline: 0,
             cpu_locality: 0,
             current_root: Box::new("initramfs".to_string()),
         })
     }
 
-    pub fn new_kernel_with_arg(
+    pub fn new_arg(
         entry: fn(usize),
         arg: usize,
         kernel_stack_top: usize,

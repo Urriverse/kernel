@@ -65,7 +65,7 @@ lazy_static! {
 
         "KeMemAlloc"                =>  crate::mem::soa::alloc              as *const () as usize,
         "KeMemFree"                 =>  crate::mem::soa::free               as *const () as usize,
-        "KeMemStack"                =>  crate::sched::alloc_kestack         as *const () as usize,
+        "KeMemStack"                =>  crate::sched::alloc_kstack         as *const () as usize,
         "KeMemPhysToVirt"           =>  crate::mem::kdm::Paddr::to_virt     as *const () as usize,
         "KeMemVirtToPhys"           =>  crate::mem::kdm::Vaddr::to_phys     as *const () as usize,
 

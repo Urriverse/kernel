@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
-use crate::sched::task::TaskId;
+use crate::sched::task::{Priority, TaskId};
 
 pub struct Module<'a> {
     pub bytes   : &'a [u8],
@@ -198,14 +198,10 @@ impl<'a> Module<'a> {
     pub fn run(&self) -> TaskId {
         let proc = Arc::new(Process::new());
     
-        let stack_top = crate::sched::alloc_kestack(32 << 10);
-        
-        let mut task = crate::sched::task::Task::new_kernel(
-            self.entry,
-            stack_top,
-            crate::sched::task::Priority(0),
-            self.name.to_string(),
-        );
+        let mut task = crate::sched::task::Task::new();
+        task.ctx.frame.rip = self.entry as u64;
+        task.weight = Priority::nice_to_weight(0);
+        task.name = self.name.to_string();
         
         task.process = proc.clone();
         

@@ -24,17 +24,25 @@ pub static TASK_REGISTRY: Nutex<BTreeMap<TaskId, Box<Task>>> = Nutex::new(BTreeM
 pub static EXIT_WQ: Nutex<WaitQueue> = Nutex::new(WaitQueue::new());
 static TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
 static BALANCE_TICKS: AtomicU64 = AtomicU64::new(0);
-static mut SPUR: [usize; 16] = [0usize; 16];
+static SPUR: [u8; 1024] = [0u8; 1024];
 
 pub fn init(ticks_per_10ms: u64) {
     TICKS_PER_MS.store(ticks_per_10ms / 10, Ordering::Release);
 
     for (cpu, _) in RUNQUEUES.iter().enumerate().take(crate::arch::num_cpus()) {
-        let stack = alloc_kestack(32 * 1024);
+        let stack = alloc_kstack(32 * 1024);
         crate::arch::percpu::init_syscall_gs(cpu, stack);
 
-        let boot = Task::new_kernel(||loop{core::hint::spin_loop()}, addr_of!(SPUR) as usize + 64, Priority(0), "boot".to_owned());
-        let mut idle = Task::new_kernel(idle_task, stack, Priority(19), "idle".to_owned());
+        let mut boot = Task::new_nostack();
+        boot.ctx.frame.rsp = addr_of!(SPUR) as u64 + 1024;
+        boot.name = "boot".to_owned();
+        let mut idle = Task::new_nostack();
+        idle.ctx.frame.rip = idle_task as *const fn() as u64;
+        idle.ctx.frame.rsp = stack as u64;
+        idle.kernel_stack = stack;
+        idle.kernel_stack_top = stack;
+        idle.weight = Priority::nice_to_weight(19);
+        idle.name = "idle".to_owned();
         idle.cpu_affinity = Some(cpu);
         let mut rq = RUNQUEUES[cpu].lock();
         rq.set_current(boot.id);
@@ -45,7 +53,7 @@ pub fn init(ticks_per_10ms: u64) {
     crate::info!("Initialized with SMP Balancing");
 }
 
-pub fn alloc_kestack(size: usize) -> usize {
+pub fn alloc_kstack(size: usize) -> usize {
     let pages = size.div_ceil(4096);
     let paddr = crate::mem::upa::alloc(pages);
     if paddr.to_raw() == 0 { panic!("Failed to allocate kernel stack"); }
@@ -90,9 +98,11 @@ pub fn spawn(
     cpu_affinity: Option<usize>,
     new_pid: bool
 ) -> Spawn {
-    let stack = alloc_kestack(32 * 1024);
-    let mut task = Task::new_kernel(entry, stack, priority, name);
+    let mut task = Task::new();
+    task.ctx.frame.rip = entry as u64;
     task.cpu_affinity = cpu_affinity;
+    task.weight = Priority::nice_to_weight(priority.0);
+    task.name = name;
 
     let proc = if new_pid {
         Process::new()
@@ -113,8 +123,8 @@ pub fn spawn_with_arg(
     cpu_affinity: Option<usize>,
     new_pid: bool
 ) -> TaskId {
-    let stack = alloc_kestack(32 * 1024);
-    let mut task = Task::new_kernel_with_arg(entry, arg, stack, priority, name);
+    let stack = alloc_kstack(32 * 1024);
+    let mut task = Task::new_arg(entry, arg, stack, priority, name);
     task.cpu_affinity = cpu_affinity;
     
     let proc = if new_pid {
@@ -166,7 +176,7 @@ pub fn exit(code: i32) -> ! {
     let cpu = current_cpu();
     let mut rq = RUNQUEUES[cpu].lock();
     let current_id = rq.current_task_id().unwrap_or(TaskId(0));
-    let mut task = rq.remove(current_id).unwrap();
+    let mut task = rq.remove(current_id).unwrap_or_default();
 
     // let pid = task.process.pid;
 
