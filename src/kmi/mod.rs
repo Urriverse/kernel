@@ -21,7 +21,7 @@ pub fn kvdn(name: &'static str) -> Box![&Device] {
 lazy_static! {
     static ref KESYMTAB: alloc::collections::BTreeMap<&'static str, usize> = auto_btm!
     {
-        // "KeTest"                    => front::KeTest                        as *const () as usize,
+        "KeTest"                    => front::KeTest                        as *const () as usize,
 
         "KeVtDeviceNew"             => kvdn       as *const () as usize,
 
