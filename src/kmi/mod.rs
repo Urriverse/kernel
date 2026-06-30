@@ -90,7 +90,7 @@ pub fn init(elf: &[u8]) {
     // parse and load module
     let module = mbs::Module::load(elf).expect("Unable to start initial module");
 
-    trace!("Module loaded");
+    trace!("Module loaded at {:p}", module.offset as *const ());
 
     let (symtab, strtab) = module.symbols().expect("No symtab");
 
