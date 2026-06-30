@@ -206,7 +206,7 @@ impl DeviceId {
 /// This struct holds all information about a device, including its name,
 /// parent relationship, driver‑specific data, and the table of methods it
 /// supports.
-#[repr(C)]
+#[repr(C, align(128))]
 pub struct Device {
     /// The assigned device ID (set by the registry upon registration).
     pub id: DeviceId,
