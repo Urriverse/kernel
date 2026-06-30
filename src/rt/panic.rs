@@ -17,7 +17,7 @@ pub fn print_stack_trace(mut frame_ptr: usize) {
     ) };
 
     let mut msg = heapless::String::<32>::new();
-    let _ = msg.write_fmt(format_args!("  RSP 0x{:016X}", count, frame_ptr));
+    let _ = msg.write_fmt(format_args!("  RSP 0x{:016X}", frame_ptr));
     unsafe { kmsg::str_log_noblock(
         kmsg::KeAttLvl::Error,
         "",
@@ -26,7 +26,7 @@ pub fn print_stack_trace(mut frame_ptr: usize) {
         msg.as_str()
     ) };
 
-    while frame_ptr != 0 && count < 32 {
+    while frame_ptr > 0xffff800000000000 && frame_ptr < 0xffffffffffffffff && count < 32 {
         let ret_addr = unsafe { *(frame_ptr as *const usize).add(1) };
 
         let mut msg = heapless::String::<32>::new();
