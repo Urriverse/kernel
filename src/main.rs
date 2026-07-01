@@ -49,7 +49,6 @@
 #![feature(likely_unlikely)]
 #![feature(const_cmp)]
 #![feature(const_default)]
-#![feature(decl_macro)]
 #![feature(naked_functions_rustic_abi)]
 
 #![allow(clippy::missing_transmute_annotations)]
@@ -172,6 +171,8 @@ entry! {
         // PHASE 1: Architecture Early Initialization (BSP)
         // --------------------------------------------------------------------
         arch::early_init_bs();
+
+        warn!("crate::sched::exit: {:p}", crate::sched::exit as *const ());
 
         // Start all APs (each AP will execute `for AP` block)
         start_aps!();
