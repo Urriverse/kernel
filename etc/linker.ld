@@ -35,8 +35,6 @@ SECTIONS
         *(.bss .bss.*)
     }
 
-    PROVIDE(executable_len = . - executable_start);
-
     .metadata : {
         KEEP(*(.metadata))
         LONG(executable_start);
@@ -49,3 +47,5 @@ SECTIONS
         *(.interp)
     }
 }
+
+PROVIDE(executable_len = . - executable_start);
