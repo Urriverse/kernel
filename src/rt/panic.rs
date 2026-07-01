@@ -57,37 +57,39 @@ pub fn print_stack_trace(mut frame_ptr: usize) {
 
 static PANIC_LOCK: Nutex<()> = Nutex::new(());
 
-#[panic_handler]
-#[allow(static_mut_refs)]
-pub fn panic(info: &core::panic::PanicInfo) -> ! {
-    let _g1 = PANIC_LOCK.lock();
-    let _g2 = kmsg::SINKS.lock();
-    let loc = *info.location().unwrap();
-    let line = loc.line();
-    let _ = unsafe { PANIC_BUF.write_str(loc.file()) };
-    let file = unsafe { PANIC_BUF.as_str() };
+Export! {
+    #[panic_handler]
+    #[allow(static_mut_refs)]
+    pub fn panic as ExecPanic(info: &core::panic::PanicInfo) -> ! where kernel 0.1 {
+        let _g1 = PANIC_LOCK.lock();
+        let _g2 = kmsg::SINKS.lock();
+        let loc = *info.location().unwrap();
+        let line = loc.line();
+        let _ = unsafe { PANIC_BUF.write_str(loc.file()) };
+        let file = unsafe { PANIC_BUF.as_str() };
 
-    let mut s = heapless::String::<256>::new();
+        let mut s = heapless::String::<256>::new();
 
-    let _ = s.write_fmt(format_args!("{}", info.message()));
+        let _ = s.write_fmt(format_args!("{}", info.message()));
 
-    unsafe { kmsg::str_log_noblock(
-        kmsg::KeAttLvl::Panic,
-        "",
-        file,
-        line,
-        &s,
-    ) };
+        unsafe { kmsg::str_log_noblock(
+            kmsg::KeAttLvl::Panic,
+            "",
+            file,
+            line,
+            &s,
+        ) };
 
-    let mut bp: usize;
-    unsafe {
-        core::arch::asm!("mov {}, rbp", out(reg) bp);
+        let mut bp: usize;
+        unsafe {
+            core::arch::asm!("mov {}, rbp", out(reg) bp);
+        }
+
+        print_stack_trace(bp);
+
+        drop(_g1);
+        drop(_g2);
+
+        crate::sched::exit(-1);
     }
-
-    print_stack_trace(bp);
-
-    drop(_g1);
-    drop(_g2);
-
-    crate::sched::exit(-1);
 }

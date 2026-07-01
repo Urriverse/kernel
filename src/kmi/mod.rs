@@ -1,30 +1,27 @@
-use crate::dev::Device;
-use ketypes::{Kexport, parse_version};
+use core::cell::UnsafeCell;
 
 pub mod mbs;
-pub mod front;
 
-use apaque::{Box, boxed};
+type SymAddr = usize;
 
-Export! {
-    pub fn kvdn(name: &'static str) -> Box![&Device] where kernel 0.0 {
-        trace!("Hey!");
-        let device = crate::dev::Device::new(name);
-        trace!("Point");
-        let rv: Box<_, Device> = <boxed![&Device]>::new(device);
-        trace!("Bye!");
-        rv
-    }
+#[derive(Debug, Clone, Copy)] #[allow(unused)]
+struct ModSymbol {
+    addr: SymAddr,
+    vmaj: u32,
+    vmin: u32,
 }
 
-// here type erasure is safe as we save contract on module's side.
+struct KST (UnsafeCell<alloc::collections::BTreeMap<&'static str, ModSymbol>>);
+
+unsafe impl Sync for KST {}
+unsafe impl Send for KST {}
+
 lazy_static! {
-    static ref KESYMTAB: alloc::collections::BTreeMap<&'static str, usize> = auto_btm!
-    {
-        "Test"                    => front::KeTest                        as *const () as usize,
-
-        "VtDeviceNew"             => __stub_kvdn as *const () as usize,
-
+    static ref KESYMTAB
+    :   KST
+    =   KST(UnsafeCell::new(alloc::collections::BTreeMap::new()),);
+    // auto_btm!
+    // {
         // "DeviceAddMethod"         => crate::dev::Device::add_method       as *const () as usize,
         // "DeviceGetMethod"         => crate::dev::Device::get_method       as *const () as usize,
         // "DeviceRegister"          => crate::dev::register_device          as *const () as usize,
@@ -37,9 +34,9 @@ lazy_static! {
         // "EventUnsubscribe"        => crate::ebus::unsubscribe             as *const () as usize,
         // "EventPublish"            => crate::ebus::publish                 as *const () as usize,
 
-        "ExecPanic"               =>  crate::rt::panic::panic             as *const () as usize,
-        "ExecExit"                =>  crate::sched::exit                  as *const () as usize,
-        "ExecYield"               =>  crate::sched::yield_now             as *const () as usize,
+        // "ExecPanic"               =>  crate::rt::panic::panic             as *const () as usize,
+        // "ExecExit"                =>  crate::sched::exit                  as *const () as usize,
+        // "ExecYield"               =>  crate::sched::yield_now             as *const () as usize,
         // "ExecSleep"               =>  crate::sched::sleep                 as *const () as usize,
         // "ExecSpawn"               =>  crate::sched::spawn                 as *const () as usize,
         // "ExecArgumentedSpawn"     =>  crate::sched::spawn_with_arg        as *const () as usize,
@@ -63,11 +60,11 @@ lazy_static! {
         // "FsMount"                 =>  crate::vfs::mount                   as *const () as usize,
         // "FsCurrentRoot"           => crate::sched::current_root           as *const () as usize,
 
-        "MemAlloc"                =>  crate::mem::soa::alloc              as *const () as usize,
-        "MemFree"                 =>  crate::mem::soa::free               as *const () as usize,
-        "MemStack"                =>  crate::sched::alloc_kstack         as *const () as usize,
-        "MemPhysToVirt"           =>  crate::mem::kdm::Paddr::to_virt     as *const () as usize,
-        "MemVirtToPhys"           =>  crate::mem::kdm::Vaddr::to_phys     as *const () as usize,
+        // "MemAlloc"                =>  crate::mem::soa::alloc              as *const () as usize,
+        // "MemFree"                 =>  crate::mem::soa::free               as *const () as usize,
+        // "MemStack"                =>  crate::sched::alloc_kstack         as *const () as usize,
+        // "MemPhysToVirt"           =>  crate::mem::kdm::Paddr::to_virt     as *const () as usize,
+        // "MemVirtToPhys"           =>  crate::mem::kdm::Vaddr::to_phys     as *const () as usize,
 
         // "ModuleLoad"              =>  mbs::safe::load_module              as *const () as usize,
         // "ModuleSymbols"           =>  mbs::safe::get_symbols              as *const () as usize,
@@ -75,7 +72,7 @@ lazy_static! {
         // "ModulePointer"           =>  mbs::safe::sym_get_ptr              as *const () as usize,
         // "ModuleExecute"           =>  mbs::safe::run_module               as *const () as usize,
 
-        "MonLog"                  =>  crate::kmsg::log  as *const () as usize,
+        // "MonLog"                  =>  crate::kmsg::log  as *const () as usize,
         // "MonAddSink"              =>  crate::kmsg::add                    as *const () as usize,
 
         // "PagingPap"               => crate::mem::ptm::cur_try_map         as *const () as usize,
@@ -83,14 +80,24 @@ lazy_static! {
         // "PagingUnmap"             => crate::mem::ptm::cur_try_unmap       as *const () as usize,
         // "PagingMerge"             => crate::mem::ptm::merge_range         as *const () as usize,
         // "PagingQuery"             => crate::mem::ptm::cur_query           as *const () as usize,
-    };
+    // };
 }
 
 pub fn init(elf: &[u8]) {
+    let kst = unsafe { (*KESYMTAB).0.get().as_mut_unchecked() };
+
     trace!("Analyzing kernel");
     
     for entt in crate::KMI_TABLE {
         info!("Oh, wow: kernel exports `{}`!", unsafe { entt.2.as_ref_unchecked() });
+        kst.insert(
+            unsafe { entt.2.as_ref_unchecked() },
+            ModSymbol {
+                addr: entt.0 as _,
+                vmaj: (entt.1 >> 32) as u32,
+                vmin: entt.1 as u32 & u32::MAX,
+            }
+        );
     }
 
     // parse and load module
@@ -113,17 +120,16 @@ pub fn init(elf: &[u8]) {
             if name.starts_with("Ki") {
                 let name = &name[2..];
                 trace!("Linking `{}`", name);
-                if KESYMTAB.contains_key(name) {
+                if kst.contains_key(name) {
                     if let Some(r) = module.dive(&sym) {
-                        trace!("Assigning {:p} (address behind {}) to {:x}", r, name, KESYMTAB[name]);
-                        r.0 = KESYMTAB[name] as *const ();
+                        trace!("Assigning {:p} (address behind {}) to {:?}", r, name, kst[name]);
+                        r.0 = kst[name].addr as _;
                     } else {
                         error!("Failed to resolve address of symbol `{}`", name);
                     }
                     trace!("Linked {}", name);
                 } else if name.len() > 2 && name.starts_with("Ke") {
-                    warn!("Symbol `{}` looks like kernel import, but unknown for kernel", name);
-                    warn!("This will cancel module loading later");
+                    panic!("Symbol `{}` looks like kernel import, but unknown for kernel", name);
                 }
             }
 

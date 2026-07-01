@@ -213,12 +213,14 @@ macro_rules! entry
         {
             unsafe { core::arch::asm! { "cli" } }
             $($a)*
+            // unreachable!();
         }
         pub fn main() -> !
         {
             unsafe { core::arch::asm! { "cli" } }
             info!("Kernel v{} started.", env!("CARGO_PKG_VERSION"));
             $($b)*
+            // unreachable!();
         }
     }
 }

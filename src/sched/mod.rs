@@ -70,9 +70,7 @@ fn idle_task() {
     }
 }
 
-pub struct Spawn {
-    pub task: Box<Task>,
-}
+pub struct Spawn { pub task: Box<Task> }
 
 impl Spawn {
     pub fn run(mut self) -> TaskId {
@@ -172,41 +170,40 @@ where
 
 pub static mut REAPER: TaskId = TaskId(0);
 
-pub fn exit(code: i32) -> ! {
-    let cpu = current_cpu();
-    let mut rq = RUNQUEUES[cpu].lock();
-    let current_id = rq.current_task_id().unwrap_or(TaskId(0));
-    let mut task = rq.remove(current_id).unwrap_or_default();
+Export! {
+    pub fn exit as ExecExit(code: i32) -> ! where kernel 0.1 {
+        let cpu = current_cpu();
+        let mut rq = RUNQUEUES[cpu].lock();
+        let current_id = rq.current_task_id().unwrap_or(TaskId(0));
+        let mut task = rq.remove(current_id).unwrap_or_default();
 
-    // let pid = task.process.pid;
+        rq.clear_current();
 
-    // debug!("Exiting task \"{}\" (TID {} PID {}) with code {}", task.name, current_id.0, pid, code);
-
-    rq.clear_current();
-
-    let init_id = unsafe { REAPER };
-    {
-        let mut registry = TASK_REGISTRY.lock();
-        for t in registry.values_mut() {
-            if t.parent == Some(current_id) { t.parent = Some(init_id); }
+        let init_id = unsafe { REAPER };
+        {
+            let mut registry = TASK_REGISTRY.lock();
+            for t in registry.values_mut() {
+                if t.parent == Some(current_id) { t.parent = Some(init_id); }
+            }
         }
+
+        task.state = TaskState::Zombie;
+        task.exit_code = code;
+        TASK_REGISTRY.lock().insert(current_id, task);
+
+        wakeup(&EXIT_WQ);
+
+        yield_now();
+        loop { unsafe { core::arch::asm! { "hlt" } } }
     }
-
-    task.state = TaskState::Zombie;
-    task.exit_code = code;
-    TASK_REGISTRY.lock().insert(current_id, task);
-
-    // crate::debug!("Task {} is now a zombie, waking up reaper...", current_id.0);
-    wakeup(&EXIT_WQ);
-
-    yield_now();
-    loop { unsafe { core::arch::asm! { "hlt" } } }
 }
 
-#[inline(always)]
-pub fn yield_now() {
-    unsafe {
-        core::arch::asm!("int 33");
+Export! {
+    #[inline(always)]
+    pub fn yield_now as ExecYield() where kernel 0.1 {
+        unsafe {
+            core::arch::asm!("int 33");
+        }
     }
 }
 
