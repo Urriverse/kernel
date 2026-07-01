@@ -144,8 +144,6 @@ limine! { MODULES <= ModulesRequest }
 // KERNEL ENTRY POINT (BSP + AP)
 // ============================================================================
 
-fn check() { error!("check") }
-
 // Main entry point – defines both BSP and AP entry functions.
 //
 // ## BSP Flow (core 0)
@@ -173,11 +171,6 @@ entry! {
         // PHASE 1: Architecture Early Initialization (BSP)
         // --------------------------------------------------------------------
         arch::early_init_bs();
-
-        let c = check as fn() as *const () as usize;
-
-        warn!("check: {:x}", c);
-        (unsafe{core::mem::transmute::<_, fn()>(c)})();
 
         // Start all APs (each AP will execute `for AP` block)
         start_aps!();
