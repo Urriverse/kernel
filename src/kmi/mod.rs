@@ -1,5 +1,6 @@
 // use nopaque::*;
 
+use ketypes::KeAttLvl;
 use crate::dev::Device;
 
 pub mod mbs;
@@ -74,7 +75,7 @@ lazy_static! {
         // "ModulePointer"           =>  mbs::safe::sym_get_ptr              as *const () as usize,
         // "ModuleExecute"           =>  mbs::safe::run_module               as *const () as usize,
 
-        "MonLog"                  =>  crate::kmsg::log                    as *const () as usize,
+        "MonLog"                  =>  crate::kmsg::log as fn(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>) as *const () as usize,
         // "MonAddSink"              =>  crate::kmsg::add                    as *const () as usize,
 
         // "PagingPap"               => crate::mem::ptm::cur_try_map         as *const () as usize,
