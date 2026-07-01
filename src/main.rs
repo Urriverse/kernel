@@ -174,9 +174,9 @@ entry! {
         // --------------------------------------------------------------------
         arch::early_init_bs();
 
-        let c = check as fn() as *const ();
+        let c = check as fn() as *const () as usize;
 
-        warn!("check: {:p}", c);
+        warn!("check: {:x}", c);
         (unsafe{core::mem::transmute::<_, fn()>(c)})();
 
         // Start all APs (each AP will execute `for AP` block)
