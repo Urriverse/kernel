@@ -1,21 +1,20 @@
-// use nopaque::*;
-
-use core::ptr::addr_of;
-
 use crate::dev::Device;
+use ketypes::{Export, parse_version};
 
 pub mod mbs;
 pub mod front;
 
 use apaque::{Box, boxed};
 
-pub fn kvdn(name: &'static str) -> Box![&Device] {
-    trace!("Hey!");
-    let device = crate::dev::Device::new(name);
-    trace!("Point");
-    let rv: Box<_, Device> = <boxed![&Device]>::new(device);
-    trace!("Bye!");
-    rv
+Export! {
+    pub fn kvdn(name: &'static str) -> Box![&Device] where kernel 0.0 {
+        trace!("Hey!");
+        let device = crate::dev::Device::new(name);
+        trace!("Point");
+        let rv: Box<_, Device> = <boxed![&Device]>::new(device);
+        trace!("Bye!");
+        rv
+    }
 }
 
 // here type erasure is safe as we save contract on module's side.
@@ -24,7 +23,7 @@ lazy_static! {
     {
         "Test"                    => front::KeTest                        as *const () as usize,
 
-        "VtDeviceNew"             => kvdn       as *const () as usize,
+        "VtDeviceNew"             => __stub_kvdn as *const () as usize,
 
         // "DeviceAddMethod"         => crate::dev::Device::add_method       as *const () as usize,
         // "DeviceGetMethod"         => crate::dev::Device::get_method       as *const () as usize,
@@ -87,7 +86,27 @@ lazy_static! {
     };
 }
 
+unsafe extern "C" {
+    static executable_start: usize;
+    static executable_len: usize;
+}
+
 pub fn init(elf: &[u8]) {
+    trace!("Analyzing kernel");
+    let kernel = mbs::Module::load(unsafe { core::slice::from_raw_parts(executable_start as *const u8, executable_len) }).expect("Unable to analyze kernel");
+    let (ksymtab, kstrtab) = kernel.symbols().expect("No symtab");
+
+    for sym in ksymtab {
+        if let Ok(name) = kstrtab.get(sym.st_name as usize) {
+            // trace!("Found symbol `{}`", name);
+            if name.starts_with("Ke") {
+                if let Some(r) = kernel.dive(&sym) {
+                    trace!("Kernel exports symbol {} at {:p}", &name[2..], r);
+                }
+            }
+        }
+    }
+
     // parse and load module
     let module = mbs::Module::load(elf).expect("Unable to start initial module");
 
@@ -110,7 +129,7 @@ pub fn init(elf: &[u8]) {
                 trace!("Linking `{}`", name);
                 if KESYMTAB.contains_key(name) {
                     if let Some(r) = module.dive(&sym) {
-                        trace!("Assigning {:p} (address behind {}) to {:x}", addr_of!(*r), name, KESYMTAB[name]);
+                        trace!("Assigning {:p} (address behind {}) to {:x}", r, name, KESYMTAB[name]);
                         r.0 = KESYMTAB[name] as *const ();
                     } else {
                         error!("Failed to resolve address of symbol `{}`", name);

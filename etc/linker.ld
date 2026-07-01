@@ -12,7 +12,7 @@ KERNEL_VMA = 0xFFFFFFFFFF000000;
 SECTIONS
 {
     . = SIZEOF_HEADERS + KERNEL_VMA;
-    executable_start = . - SIZEOF_HEADERS;
+    executable_start = KERNEL_VMA;
 
     .text : {
         *(.text .text.*)
@@ -54,4 +54,6 @@ SECTIONS
         *(.note .note.*)
         *(.interp)
     }
+
+    executable_len = . - executable_start;
 }
