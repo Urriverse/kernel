@@ -4,7 +4,6 @@ use crate::dev::Device;
 
 pub mod mbs;
 pub mod front;
-pub mod testbox;
 
 use apaque::{Box, boxed};
 
