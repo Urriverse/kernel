@@ -144,7 +144,7 @@ limine! { MODULES <= ModulesRequest }
 // KERNEL ENTRY POINT (BSP + AP)
 // ============================================================================
 
-extern "Rust" fn check() { error!("check") }
+fn check() { error!("check") }
 
 // Main entry point – defines both BSP and AP entry functions.
 //
