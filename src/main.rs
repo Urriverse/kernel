@@ -78,10 +78,7 @@ pub extern crate lazy_static;
 #[macro_use]
 pub extern crate alloc;
 
-#[allow(clippy::useless_attribute)]
-#[allow(unused)] // cargo check false positive
-#[macro_use]
-pub extern crate ketypes;
+#[allow(clippy::useless_attribute)] #[macro_use] pub extern crate ketypes;
 
 // ============================================================================
 // INTERNAL MODULES
