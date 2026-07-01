@@ -86,14 +86,22 @@ lazy_static! {
     };
 }
 
-unsafe extern "C" {
-    static executable_start: usize;
-    static executable_len: usize;
+unsafe extern "Rust" {
+    static executable_start: ();
+    static executable_len: ();
 }
 
 pub fn init(elf: &[u8]) {
     trace!("Analyzing kernel");
-    let kernel = mbs::Module::load(unsafe { core::slice::from_raw_parts(executable_start as *const u8, executable_len) }).expect("Unable to analyze kernel");
+    let kernel = mbs::Module::load(
+        unsafe {
+            core::slice::from_raw_parts (
+                &executable_start as *const () as *const u8,
+                &executable_len as *const () as usize
+            )
+        }
+    ).expect("Unable to analyze kernel");
+
     let (ksymtab, kstrtab) = kernel.symbols().expect("No symtab");
 
     for sym in ksymtab {
