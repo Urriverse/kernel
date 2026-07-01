@@ -144,6 +144,8 @@ limine! { MODULES <= ModulesRequest }
 // KERNEL ENTRY POINT (BSP + AP)
 // ============================================================================
 
+fn check() { error!("check") }
+
 // Main entry point – defines both BSP and AP entry functions.
 //
 // ## BSP Flow (core 0)
@@ -172,7 +174,8 @@ entry! {
         // --------------------------------------------------------------------
         arch::early_init_bs();
 
-        warn!("crate::sched::exit: {:p}", crate::sched::exit as *const ());
+        warn!("check: {:p}", check as *const ());
+        (unsafe{(check as*const()as*const fn()).as_ref_unchecked()})();
 
         // Start all APs (each AP will execute `for AP` block)
         start_aps!();
