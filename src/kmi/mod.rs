@@ -1,5 +1,5 @@
 use crate::dev::Device;
-use ketypes::{Export, parse_version};
+use ketypes::{Kexport, parse_version};
 
 pub mod mbs;
 pub mod front;
@@ -86,33 +86,11 @@ lazy_static! {
     };
 }
 
-unsafe extern "Rust" {
-    static executable_start: ();
-    static executable_len: ();
-}
-
 pub fn init(elf: &[u8]) {
     trace!("Analyzing kernel");
-    let kernel = mbs::Module::load(
-        unsafe {
-            core::slice::from_raw_parts (
-                core::ptr::addr_of!(executable_start) as *const u8,
-                core::ptr::addr_of!(executable_len) as usize,
-            )
-        }
-    ).expect("Unable to analyze kernel");
-
-    let (ksymtab, kstrtab) = kernel.symbols().expect("No symtab");
-
-    for sym in ksymtab {
-        if let Ok(name) = kstrtab.get(sym.st_name as usize) {
-            // trace!("Found symbol `{}`", name);
-            if name.starts_with("Ke") {
-                if let Some(r) = kernel.dive(&sym) {
-                    trace!("Kernel exports symbol {} at {:p}", &name[2..], r);
-                }
-            }
-        }
+    
+    for entt in crate::KMI_TABLE {
+        info!("Oh, wow: kernel exports `{}`!", unsafe { entt.2.as_ref_unchecked() });
     }
 
     // parse and load module

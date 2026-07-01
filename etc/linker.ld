@@ -41,6 +41,11 @@ SECTIONS
         LONG(executable_len);
     }
 
+    .linkme : {
+        KEEP(*(.linkme))
+        KEEP(*(.linkme.*))
+    }
+
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)

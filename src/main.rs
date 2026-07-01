@@ -56,6 +56,7 @@
 #![cfg_attr(not(debug_assertions), allow(unused_assignments))]
 
 use alloc::{borrow::ToOwned as _, string::ToString as _, sync::Arc};
+use linkme::distributed_slice;
 
 // ============================================================================
 // EXTERNAL CRATES
@@ -139,6 +140,9 @@ pub mod obj;
 barrier! { ARCH_INIT MEM_INIT LATE_INIT DEV_INIT SCHED_INIT }
 
 limine! { MODULES <= ModulesRequest }
+
+#[distributed_slice]
+pub static KMI_TABLE: [ketypes::Kexport] = [..];
 
 // ============================================================================
 // KERNEL ENTRY POINT (BSP + AP)
