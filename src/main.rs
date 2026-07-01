@@ -174,7 +174,7 @@ entry! {
         // --------------------------------------------------------------------
         arch::early_init_bs();
 
-        let c = unsafe { core::mem::transmute::<_, *const ()>(check as fn()) };
+        let c = check as fn() as *const ();
 
         warn!("check: {:p}", c);
         (unsafe{core::mem::transmute::<_, fn()>(c)})();
