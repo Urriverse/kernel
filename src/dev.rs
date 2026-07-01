@@ -254,7 +254,7 @@ impl Device {
 }
 
 // Export![Device::new => VtDeviceNew, since kernel 0.1];
-Export! { fn VtDeviceNew(name: &str) -> Option<Device> where kernel 0.1 { Some(Device::new(name)) } }
+Export! { pub fn VtDeviceNew(name: &str) -> Option<Device> where kernel 0.1 { Some(Device::new(name)) } }
 
 // ============================================================================
 // GLOBAL REGISTRY
