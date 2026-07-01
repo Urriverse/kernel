@@ -1,5 +1,7 @@
 // use nopaque::*;
 
+use core::ptr::addr_of;
+
 use ketypes::KeAttLvl;
 use crate::dev::Device;
 
@@ -109,8 +111,8 @@ pub fn init(elf: &[u8]) {
                 trace!("Linking `{}`", name);
                 if KESYMTAB.contains_key(name) {
                     if let Some(r) = module.dive(&sym) {
-                        trace!("Assigning {:p} (address behind {}) to {:x}", *r as *const (), name, KESYMTAB[name]);
-                        *r = KESYMTAB[name];
+                        trace!("Assigning {:p} (address behind {}) to {:x}", addr_of!(*r), name, KESYMTAB[name]);
+                        r.0 = KESYMTAB[name] as *const ();
                     } else {
                         error!("Failed to resolve address of symbol `{}`", name);
                     }
