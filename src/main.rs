@@ -174,8 +174,10 @@ entry! {
         // --------------------------------------------------------------------
         arch::early_init_bs();
 
-        warn!("check: {:p}", check as *const ());
-        (unsafe{(core::ptr::addr_of!(*&check)as*const()as*const fn()).as_ref_unchecked()})();
+        let c = unsafe { core::mem::transmute::<_, *const ()>(check as fn()) };
+
+        warn!("check: {:p}", c);
+        (unsafe{core::mem::transmute::<_, fn()>(c)})();
 
         // Start all APs (each AP will execute `for AP` block)
         start_aps!();
