@@ -7,7 +7,7 @@ use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
 use crate::arch::paging::EntryFlags;
 use crate::sched::task::{Priority, TaskId};
-use ketypes::Export;
+use ketypes::ImExport;
 
 pub struct Module<'a> {
     pub bytes   : &'a [u8],
@@ -189,7 +189,7 @@ impl<'a> Module<'a> {
         Vaddr::from_raw(va)
     }
 
-    pub fn dive(&self, sym: &elf::symbol::Symbol) -> Option<&mut Export> {
+    pub fn dive(&self, sym: &elf::symbol::Symbol) -> Option<&mut ImExport> {
         if let Some(va) = self.offset.checked_add(sym.st_value as usize) {
             return Some(Vaddr::from_raw(va).to_ref_mut())
         } 
