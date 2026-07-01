@@ -96,8 +96,8 @@ pub fn init(elf: &[u8]) {
     let kernel = mbs::Module::load(
         unsafe {
             core::slice::from_raw_parts (
-                &executable_start as *const () as *const u8,
-                &executable_len as *const () as usize
+                core::ptr::addr_of!(executable_start) as *const u8,
+                core::ptr::addr_of!(executable_len) as usize,
             )
         }
     ).expect("Unable to analyze kernel");

@@ -9,51 +9,43 @@ PHDRS
 
 KERNEL_VMA = 0xFFFFFFFFFF000000;
 
+EXTERN(executable_start executable_len);
+
 SECTIONS
 {
     . = SIZEOF_HEADERS + KERNEL_VMA;
-    PROVIDE(executable_start = KERNEL_VMA);
+    PROVIDE(executable_start = .);
 
     .text : {
         *(.text .text.*)
-    } :text
+    }
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
-
     .rodata : {
         *(.rodata .rodata.*)
-        *(.srodata .srodata.*)
-        *(.sdata2 .sdata2.*)
-    } :rodata
+    }
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
-
     .data : {
         *(.data .data.*)
-        *(.sdata .sdata.*)
-
-        KEEP(*(.limine_requests_start_marker))
-        KEEP(*(.limine_requests))
-        KEEP(*(.limine_requests_end_marker))
-    } :data
-
-    .dynamic : {
-        *(.dynamic)
-    } :data :dynamic
+        KEEP(*(.limine_requests*))
+    }
 
     .bss : {
         *(.bss .bss.*)
-        *(.sbss .sbss.*)
-        *(COMMON)
-    } :data
+    }
 
-    executable_end = .;
+    PROVIDE(executable_len = . - executable_start);
+
+    .metadata : {
+        KEEP(*(.metadata))
+        LONG(executable_start);
+        LONG(executable_len);
+    }
 
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
         *(.interp)
     }
-
-    PROVIDE(executable_len = . - executable_start);
 }
