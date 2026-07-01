@@ -13,8 +13,8 @@ EXTERN(executable_start executable_len);
 
 SECTIONS
 {
+    PROVIDE(executable_start = KERNEL_VMA);
     . = SIZEOF_HEADERS + KERNEL_VMA;
-    PROVIDE(executable_start = .);
 
     .text : {
         *(.text .text.*)
