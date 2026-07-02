@@ -124,6 +124,8 @@ lazy_static! {
 /// and read thereafter.
 pub static mut TOTAL_CPUS: usize = 0;
 
+Export! { fn GtArchTotalCpus() -> usize where kernel 0.1 { unsafe { TOTAL_CPUS } } }
+
 /// Physical address of the Local APIC.
 ///
 /// This is set by `lapic::init()` and used internally for mapping.
@@ -177,6 +179,8 @@ pub fn init() {
 pub fn eoi() {
     *lapic::LocalApic::new().eoi() = 0;
 }
+
+Export! { fn ArchEndOfInterrupt() where kernel 0.1 { eoi() } }
 
 // ============================================================================
 // INTER‑PROCESSOR INTERRUPTS (IPIs)
@@ -240,6 +244,8 @@ pub fn send_ipi(target_apic_id: u32, vector: u8, mode: DeliveryMode) {
 
     *lapic.iclo() = icr_low;
 }
+
+Export! { fn ArchSendSignal(target: u32, vector: u8, mode: DeliveryMode) where kernel 0.1 { send_ipi(target, vector, mode) } }
 
 /// Sends a fixed IPI (delivery mode = Fixed) to a target APIC ID.
 ///

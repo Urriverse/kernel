@@ -244,6 +244,15 @@ fn rdpid_raw() -> usize {
 /// Whether `rdpid` is available on the current CPU.
 static RDPID_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
+Export! {
+    fn ArchRdpidAvailable() -> bool
+    where kernel 0.1 {
+        core::hint::likely (
+            RDPID_AVAILABLE.load(Ordering::Acquire)
+        )
+    }
+}
+
 /// Maximum number of supported CPU cores.
 ///
 /// This is a compile‑time limit; if the system has more cores, the kernel
@@ -394,6 +403,9 @@ pub fn get_time_from_boot() -> u64 {
 
 /// Returns the time since boot in seconds (as a floating‑point value).
 #[inline]
-pub fn get_time_from_boot_s() -> f32 {
-    get_time_from_boot() as f32 / 1000.0
+pub fn get_time_from_boot_s() -> f64 {
+    get_time_from_boot() as f64 / 1000.0
 }
+
+Export! { fn ArchTimeFromBootNs() -> u64 where kernel 0.1 { TIME_FROM_BOOT.load(Ordering::Relaxed) } }
+Export! { fn ArchTimeFromBoot() -> f64 where kernel 0.1 { get_time_from_boot() as f64 / 1000.0 } }

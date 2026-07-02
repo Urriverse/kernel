@@ -1,16 +1,18 @@
-#[repr(C)] pub struct Leak<T>(*mut T);
+use core::marker::PhantomData;
 
-impl<T> core::ops::Deref for Leak<T> {
+#[repr(C)] pub struct Leak<T>(*mut (), PhantomData<T>);
+
+impl<T: 'static> core::ops::Deref for Leak<T> {
     type Target = T;
 
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref_unchecked() }
+    fn deref(&self) -> &'static Self::Target {
+        unsafe { (self.0 as *const T).as_ref_unchecked() }
     }
 }
 
-impl<T> core::ops::DerefMut for Leak<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.as_mut_unchecked() }
+impl<T: 'static> core::ops::DerefMut for Leak<T> {
+    fn deref_mut(&mut self) -> &'static mut Self::Target {
+        unsafe { (self.0 as *mut T).as_mut_unchecked() }
     }
 }
 
@@ -19,8 +21,10 @@ impl<T> Leak<T> {
         let va = crate::mem::kdm::Vaddr::from_raw(crate::mem::soa::alloc(core::alloc::Layout::for_value(&inner)) as usize);
         let mutref = va.to_ref_mut::<T>();
         *mutref = inner; // move!
-        Self(va.to_ptr_mut())
+        Self(va.to_ptr_mut(), PhantomData)
     }
+
+    pub fn inner(&self) -> &'static mut T { unsafe { (self.0 as *mut T).as_mut_unchecked() } }
 }
 
 pub type RwLeak<T> = Leak<crate::sync::RwLock<T>>;

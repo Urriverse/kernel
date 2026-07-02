@@ -3,7 +3,6 @@ use core::sync::atomic::AtomicUsize;
 // src/sched/proc.rs
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use crate::arch::trap::TrapFrame;
 use crate::mem::ptm::Polen;
 use crate::mem::vma::Vmm;
 use crate::sync::{Litex, Nutex};
@@ -18,7 +17,7 @@ pub struct Process {
     pub address_space: Arc<Nutex<Polen>>,
     pub vmm: Arc<Nutex<Vmm>>,
     pub threads: Vec<super::task::TaskId>,
-    pub syscall_handler: fn(&mut TrapFrame),
+    pub syscall_handler: AtomicUsize,
     pub roots: RootRef,
     pub level: u16,
     pub rc: AtomicUsize,
@@ -41,7 +40,7 @@ impl Default for Process {
             address_space: Arc::new(Nutex::new(Polen::reference())),
             vmm: Arc::new(Nutex::new(Vmm::new())),
             threads: Vec::new(),
-            syscall_handler: crate::sched::native_syscall_handler,
+            syscall_handler: AtomicUsize::new(crate::sched::native_syscall_handler as *const () as usize),
             roots: RootRef::new(RootReg::new()),
             level: 0,
             rc: AtomicUsize::new(0),
@@ -59,7 +58,7 @@ impl Clone for Process {
             address_space: self.address_space.clone(),
             vmm: self.vmm.clone(),
             threads: vec![],
-            syscall_handler: self.syscall_handler,
+            syscall_handler: AtomicUsize::new(self.syscall_handler.load(core::sync::atomic::Ordering::Relaxed)),
             roots: self.roots.clone(),
             level: self.level,
             rc: AtomicUsize::new(0),

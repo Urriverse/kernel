@@ -253,11 +253,15 @@ impl Device {
     }
 }
 
-// Export![Device::new => VtDeviceNew, since kernel 0.1];
 Export! {
-    pub fn VtDeviceNew(name: &str) -> Option<Box<Device>>
-    where kernel 0.1 {
+    pub fn VtDeviceNew(name: &str) -> Option<Box<Device>> where kernel 0.1 {
         Some(Box::new(Device::new(name)))
+    }
+}
+
+Export! {
+    pub fn VtDeviceAddMethod(this: &mut Box<Device>, method_id: MethodId, method: DeviceMethod) where kernel 0.1 {
+        this.add_method(method_id, method)
     }
 }
 

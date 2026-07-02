@@ -58,6 +58,8 @@
 use alloc::{borrow::ToOwned as _, string::ToString as _, sync::Arc};
 use linkme::distributed_slice;
 
+use crate::mem::leak::Leak;
+
 // ============================================================================
 // EXTERNAL CRATES
 // ============================================================================
@@ -291,11 +293,11 @@ fn init() {
 
     let size = vfs::stat(&mb, init).expect("Can't stat init inode").size;
 
-    let mut buffer = [0u8].repeat(size as usize);
+    let buffer = Leak::new([0u8].repeat(size as usize));
 
-    vfs::read(&mb, init, 0, &mut buffer).expect("Failed to read init");
+    vfs::read(&mb, init, 0, buffer.inner()).expect("Failed to read init");
 
-    kmi::init(&buffer);
+    kmi::init(buffer.inner());
     
     sched::exit(0);
 }

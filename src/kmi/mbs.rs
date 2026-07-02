@@ -1,7 +1,6 @@
-use alloc::vec::Vec;
 use crate::mem::leak::Leak;
 use alloc::borrow::ToOwned;
-use alloc::string::{ToString as _, String};
+use alloc::string::ToString as _;
 use alloc::sync::Arc;
 use crate::mem::kdm::Vaddr;
 use crate::sched::proc::Process;
@@ -29,7 +28,7 @@ impl<'a> Module<'a> {
         size: usize,
     ) -> Self { Self { bytes, elf, offset, entry, name, size } }
 
-    pub fn load(elf: &'a [u8]) -> Result<Self, alloc::string::String> {
+    pub fn load(elf: &'static [u8]) -> Result<Leak<Self>, alloc::string::String> {
         let bytes
         =   elf::ElfBytes
         ::  <elf::endian::NativeEndian>
@@ -173,7 +172,7 @@ impl<'a> Module<'a> {
         
         let entry_fn: fn() = unsafe { core::mem::transmute(entry_vaddr) };
 
-        Ok(Self::new(elf, bytes, hhdm_base, entry_fn, modname, max_vaddr - min_vaddr))
+        Ok(Leak::new(Self::new(elf, bytes, hhdm_base, entry_fn, modname, max_vaddr - min_vaddr)))
     }
 
     pub fn symbols(&self) -> Result<(elf::parse::ParsingIterator<'_, elf::endian::LittleEndian, elf::symbol::Symbol>, elf::string_table::StringTable<'_>), alloc::string::String> {
@@ -213,56 +212,54 @@ impl<'a> Module<'a> {
     }
 }
 
-pub mod safe {
-    use super::*;
+// pub mod front {
+//     use super::*;
     
-    // compatible with `nk::elf::ElfSym`
-    pub type Symbol = elf::symbol::Elf64_Sym;
+//     // compatible with `nk::elf::ElfSym`
+//     pub type Symbol = elf::symbol::Elf64_Sym;
 
-    pub type ModuleHandle<'a> = Leak<Module<'a>>;
+//     pub unsafe fn load_module(data: &[u8]) -> Result<Leak<Module<'_>>, String> {
+//         match Module::load(data) {
+//             Ok(m) => Ok(m),
+//             Err(e) => Err(e)
+//         }
+//     }
 
-    pub fn load_module(data: &'_[u8]) -> Result<ModuleHandle<'_>, String> {
-        match Module::load(data) {
-            Ok(m) => Ok(Leak::new(m)),
-            Err(e) => Err(e)
-        }
-    }
+//     pub fn get_symbols(m: Module<'_>) -> Result<Vec<Symbol>, String> {
+//         match m.symbols() {
+//             Ok((syms, _)) => {
+//                 let mut rv = Vec::new();
+//                 for s in syms { rv.push( Symbol {
+//                     st_info: s.st_info,
+//                     st_name: s.st_name,
+//                     st_other: s.st_other,
+//                     st_shndx: s.st_shndx,
+//                     st_size: s.st_size,
+//                     st_value: s.st_value,
+//                 }) }
+//                 Ok(rv)
+//             },
+//             Err(e) => Err(e),
+//         }
+//     }
 
-    pub fn get_symbols(m: ModuleHandle<'_>) -> Result<Vec<Symbol>, String> {
-        match m.symbols() {
-            Ok((syms, _)) => {
-                let mut rv = Vec::new();
-                for s in syms { rv.push( Symbol {
-                    st_info: s.st_info,
-                    st_name: s.st_name,
-                    st_other: s.st_other,
-                    st_shndx: s.st_shndx,
-                    st_size: s.st_size,
-                    st_value: s.st_value,
-                }) }
-                Ok(rv)
-            },
-            Err(e) => Err(e),
-        }
-    }
+//     pub fn get_string(m: Module<'_>, st_name: u32) -> Result<String, String> {
+//         match m.symbols() {
+//             Ok((_, strs)) => {
+//                 match strs.get(st_name as usize) {
+//                     Ok(s) => Ok(s.to_string()),
+//                     Err(e) => Err(e.to_string()),
+//                 }
+//             },
+//             Err(e) => Err(e),
+//         }
+//     }
 
-    pub fn get_string(m: ModuleHandle<'_>, st_name: u32) -> Result<String, String> {
-        match m.symbols() {
-            Ok((_, strs)) => {
-                match strs.get(st_name as usize) {
-                    Ok(s) => Ok(s.to_string()),
-                    Err(e) => Err(e.to_string()),
-                }
-            },
-            Err(e) => Err(e),
-        }
-    }
+//     pub fn sym_get_ptr(m: Module<'_>, sym: Symbol) -> *const () {
+//         m.offset.wrapping_add(sym.st_value as usize) as *const ()
+//     }
 
-    pub fn sym_get_ptr(m: ModuleHandle<'_>, sym: Symbol) -> *const () {
-        m.offset.wrapping_add(sym.st_value as usize) as *const ()
-    }
-
-    pub fn run_module(m: ModuleHandle<'_>) -> TaskId {
-        m.run()
-    }
-}
+//     pub fn run_module(m: Module<'_>) -> TaskId {
+//         m.run()
+//     }
+// }

@@ -1,5 +1,7 @@
 use core::cell::UnsafeCell;
 
+use alloc::string::{String, ToString};
+
 pub mod mbs;
 
 type SymAddr = usize;
@@ -15,7 +17,7 @@ struct ModSymbol {
 /// 
 /// Note: this struct isn't `pub` intentially. It MUST NOT e accesed
 /// from other module or other thread concurrently.
-struct KST (UnsafeCell<alloc::collections::BTreeMap<&'static str, ModSymbol>>);
+struct KST (UnsafeCell<alloc::collections::BTreeMap<String, ModSymbol>>);
 unsafe impl Sync for KST {} unsafe impl Send for KST {}
 
 lazy_static! {
@@ -26,8 +28,8 @@ lazy_static! {
 /// Initialize KMI and start initial module.
 /// 
 /// Note: this function MUST be called only once.
-pub fn init(initm_bytes: &[u8]) {
-    let kst: &mut alloc::collections::btree_map::BTreeMap<&'static str, ModSymbol>;
+pub fn init(initm_bytes: &'static [u8]) {
+    let kst;
 
     // safety: access only through this ref and already initialized (thanks lazy_static)
     unsafe {
@@ -37,7 +39,7 @@ pub fn init(initm_bytes: &[u8]) {
     // collect kernel symbols
     for entt in crate::KMI_TABLE {
         kst.insert(
-            entt.name(),
+            entt.name().to_string(),
             ModSymbol {
                 addr: entt.address(),
                 vmaj: entt.version().0,
@@ -71,6 +73,21 @@ pub fn init(initm_bytes: &[u8]) {
                     else { panic!("Failed to resolve address of symbol `{}`", name) }
                 } else if name.len() > 2 && name.starts_with("Ke") {
                     panic!("Symbol `{}` looks like kernel import, but unknown for kernel", name);
+                }
+            }
+
+            if name.starts_with("Me") {
+                // there can't be any conflicts on initial module loading
+                if let Some(r) = module.dive(&sym) {
+                    // `let _ =`: always None here
+                    let _ = kst.insert(
+                        name.to_string(),
+                        ModSymbol {
+                            addr: r.address(),
+                            vmaj: r.version().0,
+                            vmin: r.version().1,
+                        }
+                    );
                 }
             }
 

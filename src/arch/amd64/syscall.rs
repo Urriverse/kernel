@@ -67,6 +67,7 @@
 //!   to be running in Ring 0.
 
 use core::arch::naked_asm;
+
 use crate::arch::{rdmsr, wrmsr};
 
 // ============================================================================
@@ -200,7 +201,7 @@ pub unsafe extern "C" fn syscall_entry() -> ! {
         "sysret",
 
         // The dispatcher symbol (defined in the scheduler module).
-        syscall_dispatcher = sym crate::sched::syscall_dispatcher,
+        syscall_dispatcher = sym syscall_dispatcher,
     );
 }
 
@@ -241,4 +242,31 @@ pub fn init() {
     // Set FMASK to mask TF (bit 8) and IF (bit 9).
     // 0x300 = bits 8 and 9 set.
     unsafe { wrmsr(IA32_FMASK, 0x300); }
+}
+
+pub fn syscall_dispatcher(frame: &mut crate::arch::trap::TrapFrame) {
+    let proc = match crate::sched::current_process() {
+        Some(p) => p,
+        None => { crate::error!("Syscall from unknown context!"); frame.rax = u64::MAX; return; }
+    };
+    (
+        unsafe {
+            (
+                proc.syscall_handler.load(core::sync::atomic::Ordering::Relaxed)
+                as *const fn(&mut crate::arch::trap::TrapFrame)
+            ).as_ref_unchecked()
+        }
+    )(frame);
+}
+
+Export! {
+    pub fn ArchReplaceSyscallHandler(sh: fn(&mut crate::arch::trap::TrapFrame)) -> Option<()> where kernel 0.1 {
+        match crate::sched::current_process() {
+            Some(p) => {
+                p.as_ref().syscall_handler.store(sh as usize, core::sync::atomic::Ordering::Relaxed);
+                Some(())
+            },
+            None => None
+        }
+    }
 }

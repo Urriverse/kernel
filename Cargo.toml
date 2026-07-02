@@ -15,6 +15,7 @@ acpi = { version = "6", features = ["alloc"] }
 elf = { version = "0", default-features = false }
 ketypes = { git = "https://github.com/Urriverse/ketypes.git", branch = "main" }
 apaque = { git = "https://github.com/vi-is-ramen/apaque.git", branch = "main", default-features = false }
+macros = { git = "https://github.com/vi-is-ramen/macros.git", branch = "main" }
 linkme = "0.3.36"
 
 [profile.dev]

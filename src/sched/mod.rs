@@ -170,42 +170,37 @@ where
 
 pub static mut REAPER: TaskId = TaskId(0);
 
-Export! {
-    pub fn exit as ExecExit(code: i32) -> ! where kernel 0.1 {
-        let cpu = current_cpu();
-        let mut rq = RUNQUEUES[cpu].lock();
-        let current_id = rq.current_task_id().unwrap_or(TaskId(0));
-        let mut task = rq.remove(current_id).unwrap_or_default();
+pub fn exit(code: i32) -> ! {
+    let cpu = current_cpu();
+    let mut rq = RUNQUEUES[cpu].lock();
+    let current_id = rq.current_task_id().unwrap_or(TaskId(0));
+    let mut task = rq.remove(current_id).unwrap_or_default();
 
-        rq.clear_current();
+    rq.clear_current();
 
-        let init_id = unsafe { REAPER };
-        {
-            let mut registry = TASK_REGISTRY.lock();
-            for t in registry.values_mut() {
-                if t.parent == Some(current_id) { t.parent = Some(init_id); }
-            }
-        }
-
-        task.state = TaskState::Zombie;
-        task.exit_code = code;
-        TASK_REGISTRY.lock().insert(current_id, task);
-
-        wakeup(&EXIT_WQ);
-
-        yield_now();
-        loop { unsafe { core::arch::asm! { "hlt" } } }
-    }
-}
-
-Export! {
-    #[inline(always)]
-    pub fn yield_now as ExecYield() where kernel 0.1 {
-        unsafe {
-            core::arch::asm!("int 33");
+    let init_id = unsafe { REAPER };
+    {
+        let mut registry = TASK_REGISTRY.lock();
+        for t in registry.values_mut() {
+            if t.parent == Some(current_id) { t.parent = Some(init_id); }
         }
     }
+
+    task.state = TaskState::Zombie;
+    task.exit_code = code;
+    TASK_REGISTRY.lock().insert(current_id, task);
+
+    wakeup(&EXIT_WQ);
+
+    yield_now();
+    loop { unsafe { core::arch::asm! { "hlt" } } }
 }
+
+Export! { pub fn ExecExit(code: i32) -> ! where kernel 0.1 { exit(code) } }
+
+#[inline(always)] pub fn yield_now() { unsafe { core::arch::asm! { "int 33" } } }
+
+Export! { pub fn ExecYield() where kernel 0.1 { unsafe { core::arch::asm! { "int 33" } } } }
 
 pub fn current_root() -> String {
     let mut rq = RUNQUEUES[current_cpu()].lock();
@@ -470,14 +465,6 @@ pub fn native_syscall_handler(frame: &mut TrapFrame) {
         }
         _ => { crate::warn!("[Native SFD] Unknown syscall: {}", frame.rax); frame.rax = u64::MAX; }
     }
-}
-
-pub fn syscall_dispatcher(frame: &mut TrapFrame) {
-    let proc = match current_process() {
-        Some(p) => p,
-        None => { crate::error!("Syscall from unknown context!"); frame.rax = u64::MAX; return; }
-    };
-    (proc.syscall_handler)(frame);
 }
 
 pub fn handle_page_fault(addr: usize, error_code: u64, rip: u64, is_user: bool) {

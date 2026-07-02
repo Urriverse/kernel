@@ -51,57 +51,57 @@ pub fn init() {
 // LOGGING FUNCTIONS
 // ============================================================================
 
-Export! {
-    /// Internal logging function with formatting support.
-    ///
-    /// This function constructs a formatted message, then iterates over all
-    /// registered sinks and writes the message to each one.
-    ///
-    /// # Parameters
-    /// - `al`: log level
-    /// - `modpath`: module path (from `module_path!()`)
-    /// - `file`: source file name (from `file!()`)
-    /// - `line`: line number (from `line!()`)
-    /// - `fa`: format arguments (from `format_args!()`)
-    ///
-    /// # Notes
-    /// - When `lowlog` is enabled, `file` and `line` are ignored to reduce the
-    ///   message size.
-    /// - The sink's `Pretty` attribute determines whether ANSI colours are used.
-    /// - This function acquires the `SINKS` lock, so it must not be called from
-    ///   interrupt handlers or panic contexts (use `str_log_noblock` for that).
-    #[allow(unused)]
-    pub fn log as MonLog(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>) where kernel 0.1 {
-        #[cfg(feature = "lowlog")] let _ = file;
-        #[cfg(feature = "lowlog")] let _ = line;
+/// Internal logging function with formatting support.
+///
+/// This function constructs a formatted message, then iterates over all
+/// registered sinks and writes the message to each one.
+///
+/// # Parameters
+/// - `al`: log level
+/// - `modpath`: module path (from `module_path!()`)
+/// - `file`: source file name (from `file!()`)
+/// - `line`: line number (from `line!()`)
+/// - `fa`: format arguments (from `format_args!()`)
+///
+/// # Notes
+/// - When `lowlog` is enabled, `file` and `line` are ignored to reduce the
+///   message size.
+/// - The sink's `Pretty` attribute determines whether ANSI colours are used.
+/// - This function acquires the `SINKS` lock, so it must not be called from
+///   interrupt handlers or panic contexts (use `str_log_noblock` for that).
+#[allow(unused)]
+pub fn log(al: KeAttLvl, modpath: &'static str, file: &'static str, line: u32, fa: core::fmt::Arguments<'_>) {
+    #[cfg(feature = "lowlog")] let _ = file;
+    #[cfg(feature = "lowlog")] let _ = line;
 
-        // Build the message content (without prefix)
-        const INLEN: usize = MAX_MSG_LEN >> 1;
-        let mut c = String::<INLEN>::new();
-        let _ = c.write_fmt(fa);
+    // Build the message content (without prefix)
+    const INLEN: usize = MAX_MSG_LEN >> 1;
+    let mut c = String::<INLEN>::new();
+    let _ = c.write_fmt(fa);
 
-        // Lock the sink registry
-        let mut g = SINKS.lock();
+    // Lock the sink registry
+    let mut g = SINKS.lock();
 
-        for mut sink in &mut *g {
-            let mut m = Msg::new();
+    for mut sink in &mut *g {
+        let mut m = Msg::new();
 
-            // Choose level representation based on sink's Pretty flag
-            let lvl = match sink.format() {
-                KeFormat::Pretty => al.pretty(),
-                KeFormat::Regular => al.as_str(),
-            };
+        // Choose level representation based on sink's Pretty flag
+        let lvl = match sink.format() {
+            KeFormat::Pretty => al.pretty(),
+            KeFormat::Regular => al.as_str(),
+        };
 
-            // KeFormat the full message
-            #[cfg(    feature = "lowlog" )]
-            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, lvl, c.as_str()));
-            #[cfg(not(feature = "lowlog"))]
-            let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, lvl, c.as_str()));
+        // KeFormat the full message
+        #[cfg(    feature = "lowlog" )]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), modpath, lvl, c.as_str()));
+        #[cfg(not(feature = "lowlog"))]
+        let _ = m.write_fmt(format_args!(FMT!(), crate::arch::get_time_from_boot_s(), crate::arch::current_cpu(), file, line, lvl, c.as_str()));
 
-            sink.write_str(m.as_str());
-        }
+        sink.write_str(m.as_str());
     }
 }
+
+Export! { pub fn MonLog(l: KeAttLvl, m: &'static str, f: &'static str, p: u32, a: core::fmt::Arguments<'_>) where kernel 0.1 { log(l, m, f, p, a) } }
 
 /// Internal logging function for literal strings (no formatting).
 ///
