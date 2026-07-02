@@ -271,33 +271,59 @@ entry! {
 fn init() {
     ebus::init();
 
+    trace!("X");
+
     // 1. Retrieve the initramfs module data from Limine
     let modules = MODULES.response().expect("Failed to get Limine modules").modules();
+
+    trace!("Y");
+
     if modules.is_empty() {
         error!("No initramfs module found!");
         sched::exit(1);
     }
+
+    trace!("Z");
+
     let initramfs_data = modules[0].data();
+
+    trace!("W");
     
     // 2. Create the Rotar (Read-Only Tar) filesystem instance
     let initramfs = Arc::new(vfs::Rotar::new(initramfs_data));
+
+    trace!("A");
     
     // 3. Register it in the global VFS registry
     let mb_id = vfs::register_mblock(initramfs.clone() as Arc<dyn vfs::KeFileSystem>);
+
+    trace!("B");
     
     // 4. Create a RootReg and mount it under the custom name "irfs"
     vfs::mount("initramfs".to_string(), mb_id);
 
+    trace!("C");
+
     // 5. Resolve the file using the "irfs:/hello.txt" syntax!
     let (init, mb) = vfs::resolve("initramfs:/modules/km-init").expect("Can't resolve init");
 
+    trace!("D");
+
     let size = vfs::stat(&mb, init).expect("Can't stat init inode").size;
+
+    trace!("E");
 
     let buffer = Leak::new([0u8].repeat(size as usize));
 
+    trace!("F");
+
     vfs::read(&mb, init, 0, buffer.inner()).expect("Failed to read init");
 
+    trace!("G");
+
     kmi::init(buffer.inner());
+
+    trace!("H");
     
     sched::exit(0);
 }
